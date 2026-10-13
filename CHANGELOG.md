@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.20.4] - 2026-10-13
+
+- Fix: When WPVibe updates itself, it stays switched on. Before, an update WPVibe ran on its own (from your AI or a fleet job) could leave the plugin deactivated until someone turned it back on. The update now runs the way WordPress's own background updates do, so WordPress also checks the new version for errors and restores the previous one if it would break the site.
+- Improvement: Beaver Builder pages save on Beaver Builder versions before 2.6. When a save hits a PHP error, administrators see the error with its file and line, and a page the failed save created is removed.
+- Feature: Bricks header and footer templates built through WPVibe now show on the site. Before, they were saved where Bricks does not read them.
+- Improvement: Other plugins can log WPVibe's activity: the new `wpvibe_operation_executed` action fires each time an approved operation runs, with the command and the preview you approved.
+- Fix: WPVibe's SeedProd-only login route no longer appears in the plugin's route list, so AI agents stop calling it on sites without SeedProd.
+- Improvement: WPVibe can turn off a WPCode snippet it created, with no approval needed, because turning it off loses nothing and you can turn it back on in WPCode. It can also delete one of its own snippets after you approve it on the approval page (or at once, if you turned on "Dangerously bypass approvals"). A deleted snippet goes to the trash in WPCode, where you can restore it. WPVibe never turns off or deletes snippets you created, and it does not delete one of its own snippets after you changed its code. Turning a snippet off also stops it running when it was moved to the trash while still on, and clears the page caches WPVibe supports.
+- Fix: Draft theme previews work on sites that use the SeedProd Website Builder. Before, the preview showed the live SeedProd site instead of the draft. The preview and the publish result say that the live site keeps showing the SeedProd site until the Website Builder is turned off.
+- Fix: Preview pages tell hosts, caching plugins and CDNs not to cache them, so a page cache no longer serves a stale preview after an edit.
+
 ## [1.20.3] - 2026-10-06
 
 - Fix: Approved database writes that are long (over about 8 KB) and wrapped in double quotes no longer fail with a syntax error on some hosts.
