@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.20.5] - 2026-10-14
+
+- Security: User meta changes that need your approval can no longer be slipped past it with a key the database treats as the same as a protected one (for example a different letter case, an accent or a hidden character). Keys like that are refused, and a write is refused whenever WPVibe cannot confirm which stored key it would touch. Thanks to the user who reported it.
+- Improvement: WPVibe's own updates are safer. An update waits while WordPress is running its own background updates, a failed or rolled-back update is always reported as failed (with the reason when the site could not reach itself to check the new version), maintenance mode is cleared if an update is interrupted, and WPVibe records a note whenever it had to switch itself back on.
+- Fix: Approved database writes no longer fail with "Multiple SQL statements" when a quoted value contains a semicolon, such as serialized data or CSS. Anything the check cannot read with certainty is still refused.
+- Fix: When another plugin or theme crashes while WPVibe saves an edit, administrators see the PHP error with its file, line and the plugin or theme it came from, instead of WordPress's bare "critical error". Your AI is told to check whether the change was saved rather than send the same edit again.
+- Fix: An upload your site refuses because of its file type (for example an SVG blocked by an SVG plugin) is reported as an unsupported file type with the site's own message, not as a disk error, so your AI stops retrying it.
+- Fix: Menu changes no longer fail on sites whose plugins look up the admin screen when a menu is saved (for example Ocean Extra).
+- Fix: The plugin page now names the right Wordfence screen (All Options, Brute Force Protection) for the setting that turns off application passwords.
+- Fix: Astra child themes are recognized in the dashboard widget and when WPVibe picks the right Astra tools.
+- Improvement: When a site refuses WPVibe's sign-in, the connection check reports a few more facts about why (whether the server passed the credentials through and whether WordPress's application password check ran), never the credentials themselves.
+
 ## [1.20.4] - 2026-10-13
 
 - Fix: When WPVibe updates itself, it stays switched on. Before, an update WPVibe ran on its own (from your AI or a fleet job) could leave the plugin deactivated until someone turned it back on. The update now runs the way WordPress's own background updates do, so WordPress also checks the new version for errors and restores the previous one if it would break the site.
