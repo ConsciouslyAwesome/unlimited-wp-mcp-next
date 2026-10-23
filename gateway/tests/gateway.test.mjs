@@ -9,6 +9,15 @@ import { UPSTREAM_TOOLS } from '../src/upstream-tools.generated.js';
 
 const origin='https://central-gateway.chatgpt.site',user='owner',originalFetch=globalThis.fetch;
 const [A,B]=DEFAULT_SITES,approval='a'.repeat(48);
+test('REST path schemas accept complete paths in full-match connector validators',()=>{
+  for(const name of ['rest_api_read','rest_api_write']) {
+    const pattern=UPSTREAM_TOOLS.find(t=>t.name===name).inputSchema.properties.path.pattern;
+    const fullMatch=new RegExp('^(?:'+pattern+')$');
+    assert.ok(fullMatch.test('/wp/v2/pages/248168'));
+    assert.ok(fullMatch.test('/wp/v2/pages'));
+    assert.ok(!fullMatch.test('https://example.com/wp/v2/pages'));
+  }
+});
 afterEach(()=>{globalThis.fetch=originalFetch;});
 function db() {
   const sql=new DatabaseSync(':memory:');

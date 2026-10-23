@@ -6,7 +6,7 @@ final class UWNext_Capabilities {
     public static function register() {
         $permission=function(){return current_user_can('manage_options');};
         $rest_args=array(
-            'path'=>array('type'=>'string','required'=>true,'pattern'=>'^/[A-Za-z0-9_-]+/'),
+            'path'=>array('type'=>'string','required'=>true,'pattern'=>'^/[A-Za-z0-9_-]+/.*$'),
             'parameters'=>array('type'=>'object','default'=>array()),
         );
         uwnext_register_internal_route(UWNext_NS,'/rest-api/read',array('methods'=>'GET','permission_callback'=>$permission,'args'=>$rest_args,'callback'=>function($request){return self::rest($request,'GET');}));

@@ -1507,7 +1507,7 @@ export const UPSTREAM_TOOLS = [
       "properties": {
         "path": {
           "type": "string",
-          "pattern": "^/[A-Za-z0-9_-]+/"
+          "pattern": "^/[A-Za-z0-9_-]+/.*$"
         },
         "parameters": {
           "type": "object",
@@ -1537,7 +1537,7 @@ export const UPSTREAM_TOOLS = [
       "properties": {
         "path": {
           "type": "string",
-          "pattern": "^/[A-Za-z0-9_-]+/"
+          "pattern": "^/[A-Za-z0-9_-]+/.*$"
         },
         "parameters": {
           "type": "object",
