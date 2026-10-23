@@ -18,7 +18,16 @@ final class UWNext_Resources {
         // Provider limits apply. Never retry 429/403 with another identity.
         $url=add_query_arg(array('q'=>$request['query'],'page'=>(int)$request['page'],'page_size'=>(int)$request['limit']),'https://api.openverse.org/v1/images/');
         $response=wp_safe_remote_get($url,array('timeout'=>10,'redirection'=>0,'limit_response_size'=>524288,'headers'=>array('Accept'=>'application/json')));
-        if(is_wp_error($response)) {return new WP_Error('image_provider_unavailable','The independent image provider could not be reached.',array('status'=>503));}
+        if(is_wp_error($response)) {
+            // Classify only: raw transport messages may contain host details or credentials.
+            $failure='transport';
+            $message=$response->get_error_message();
+            foreach(array(6=>'dns',7=>'connection',28=>'timeout',35=>'tls',60=>'tls') as $curl=>$category) {
+                if(preg_match('/\bcURL error '.(int)$curl.'\b/i',$message)) {$failure=$category;break;}
+            }
+            if($response->get_error_code()==='http_request_not_executed') {$failure='blocked';}
+            return new WP_Error('image_provider_unavailable','The independent image provider could not be reached.',array('status'=>503,'failure_kind'=>$failure));
+        }
         $status=(int)wp_remote_retrieve_response_code($response);
         if($status!==200) {
             return new WP_Error($status===429?'image_provider_rate_limited':'image_provider_refused','The independent provider refused this request. No retry was attempted.',array('status'=>$status===429?429:502,'provider_status'=>$status,'retry_after'=>substr(sanitize_text_field((string)wp_remote_retrieve_header($response,'retry-after')),0,60)));

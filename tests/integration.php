@@ -171,6 +171,30 @@ $before_provider=$provider_calls;$provider_status=429;
 $rate_limited=data(tool('search_images',array('query'=>'fixture rate-limit query')));
 check(($rate_limited['code']??'')==='image_provider_rate_limited'&&$provider_calls===$before_provider+1,'provider rate limit is propagated without retry or spoofing');
 remove_filter('pre_http_request',$provider_mock,1);
+foreach(array(6=>'dns',7=>'connection',28=>'timeout',35=>'tls',60=>'tls') as $curl=>$category) {
+    $transport_calls=0;
+    $transport_mock=function($pre,$options,$url)use($curl,&$transport_calls){
+        if(!str_starts_with($url,'https://api.openverse.org/v1/images/?')) {return $pre;}
+        $transport_calls++;
+        return new WP_Error('http_request_failed','cURL error '.$curl.': private-host-secret');
+    };
+    add_filter('pre_http_request',$transport_mock,1,3);
+    $transport=data(tool('search_images',array('query'=>'fixture transport')));
+    check(($transport['data']['failure_kind']??'')===$category&&$transport_calls===1&&!str_contains(wp_json_encode($transport),'private-host-secret'),'image transport category '.$category.' is safe and does not retry (curl '.$curl.')');
+    remove_filter('pre_http_request',$transport_mock,1);
+}
 require __DIR__.'/plugin-rest.php';
+foreach(array('http_request_not_executed'=>'blocked','unrecognized_transport'=>'transport') as $code=>$category) {
+    $transport_calls=0;
+    $transport_mock=function($pre,$options,$url)use($code,&$transport_calls){
+        if(!str_starts_with($url,'https://api.openverse.org/v1/images/?')) {return $pre;}
+        $transport_calls++;
+        return new WP_Error($code,'private-host-secret');
+    };
+    add_filter('pre_http_request',$transport_mock,1,3);
+    $transport=data(tool('search_images',array('query'=>'fixture transport')));
+    check(($transport['data']['failure_kind']??'')===$category&&$transport_calls===1&&!str_contains(wp_json_encode($transport),'private-host-secret'),'image transport category '.$category.' is safe and does not retry');
+    remove_filter('pre_http_request',$transport_mock,1);
+}
 echo "RESULT $passed passed, $failed failed\n";
 exit($failed?1:0);
