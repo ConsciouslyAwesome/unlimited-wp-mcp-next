@@ -9,7 +9,7 @@
  *
  * 1. enshrined/svg-sanitize (the library behind the Safe SVG plugin), vendored
  *    under third-party/svg-sanitize at 1.0.0 with its namespace prefixed to
- *    UWNext\Vendor\enshrined\svgSanitize so it cannot clash with Safe SVG or
+ *    WPVibe\Vendor\enshrined\svgSanitize so it cannot clash with Safe SVG or
  *    any other plugin loading the same library. To update it: copy the new
  *    release's src/ (without svg-scanner.php) and LICENSE, re-run the prefix
  *    rewrite on `namespace`/`use`/`\enshrined` and re-add the ABSPATH guard.
@@ -84,7 +84,7 @@ class UWNext_SVG_Sanitizer {
 		self::load_library();
 		// Keep the author's whitespace and layout (the library pretty-prints by
 		// default), so a clean file is stored byte-for-byte and edit_file matches.
-		$library = new class() extends \UWNext\Vendor\enshrined\svgSanitize\Sanitizer {
+		$library = new class() extends \WPVibe\Vendor\enshrined\svgSanitize\Sanitizer {
 			protected function resetInternal() {
 				parent::resetInternal();
 				$this->xmlDocument->preserveWhiteSpace = true;
@@ -97,7 +97,7 @@ class UWNext_SVG_Sanitizer {
 		$library->setXMLOptions( 0 );
 		try {
 			$clean = $library->sanitize( $input );
-		} catch ( \UWNext\Vendor\enshrined\svgSanitize\Exceptions\NestingException $e ) {
+		} catch ( \WPVibe\Vendor\enshrined\svgSanitize\Exceptions\NestingException $e ) {
 			return self::refuse( __( 'Its <use> references nest too deeply or loop.', 'unlimited-wp-mcp-next' ) );
 		} catch ( \Throwable $e ) {
 			return self::refuse( __( 'It could not be processed as a single SVG document.', 'unlimited-wp-mcp-next' ) );
@@ -262,7 +262,7 @@ class UWNext_SVG_Sanitizer {
 	}
 
 	private static function load_library() {
-		if ( class_exists( '\UWNext\Vendor\enshrined\svgSanitize\Sanitizer', false ) ) {
+		if ( class_exists( '\WPVibe\Vendor\enshrined\svgSanitize\Sanitizer', false ) ) {
 			return;
 		}
 		$base = dirname( __DIR__ ) . '/third-party/svg-sanitize/src/';

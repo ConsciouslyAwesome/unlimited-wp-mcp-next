@@ -18,9 +18,14 @@ onboarding and updater are removed from active source. Historical upstream
 documentation is preserved under `upstream-history/` and is not setup guidance.
 No vendor account, hosted quota, signature impersonation or service bypass is used.
 
-Capability parity is **pending**. In particular, inherited local policy currently
-refuses raw SQL and broad search-replace; hosted orchestration such as browser-based
-builder compilation must be independently implemented. No production acceptance
+The source currently exposes **51 tools** and retains **131 native CLI entries**.
+SQL, search-replace and optional background execution use local exact-operation
+approvals. Image discovery uses Openverse with license/creator metadata; the
+provider's limits apply, and errors are never bypassed or automatically retried.
+Workflow guidance is authored locally. See [MIGRATION.md](MIGRATION.md).
+
+Full runtime parity is **pending**, especially browser-based builder compilation,
+builder-specific acceptance and MySQL-specific behavior. No production acceptance
 is claimed. WordPress 6.6+, PHP 8.1+ and OpenSSL are required.
 
 All mutations need one fresh, exact-operation browser approval. If execution has

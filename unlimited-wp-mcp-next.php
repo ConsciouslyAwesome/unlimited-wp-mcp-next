@@ -27,10 +27,12 @@ require_once __DIR__ . '/includes/local-admin.php';
 require_once __DIR__ . '/includes/upstream-helpers.php';
 require_once __DIR__ . '/includes/local-adapters.php';
 require_once __DIR__ . '/includes/local-capabilities.php';
+require_once __DIR__ . '/includes/local-jobs.php';
+require_once __DIR__ . '/includes/local-resources.php';
 foreach (array('error-contract','svg-sanitizer','builder-login','timing','output-guard','file-ops','content-files','content-ops','draft-lock','draft-theme','preview','cli','code-snippet','change-tracker','live-reload','classic-theme','php-guard','rest','elementor','beaver','breakdance','bricks') as $uwnext_module) {
     require_once __DIR__ . '/includes/class-uwnext-' . $uwnext_module . '.php';
 }
-foreach (array('fields','field-renderers','meta-boxes','settings','edit-affordance') as $uwnext_module) {
+foreach (array('fields','field-renderers','meta-boxes','settings','edit-affordance','post-sidebar') as $uwnext_module) {
     require_once __DIR__ . '/includes/fields/class-uwnext-' . $uwnext_module . '.php';
 }
 unset($uwnext_module);
@@ -46,10 +48,12 @@ add_action('uwnext_cleanup', array('UWNext_Store','cleanup'));
 add_action('plugins_loaded', function() {
     UWNext_REST::instance();
     foreach (array('UWNext_Elementor','UWNext_Beaver','UWNext_Breakdance','UWNext_Bricks','UWNext_Preview','UWNext_Live_Reload','UWNext_Fields','UWNext_Edit_Affordance','UWNext_Builder_Login','UWNext_Timing','UWNext_Output_Guard') as $class) { $class::instance(); }
-    if (is_admin()) { UWNext_Meta_Boxes::instance(); UWNext_Settings::instance(); }
+    if (is_admin()) { UWNext_Meta_Boxes::instance(); UWNext_Settings::instance(); UWNext_Post_Sidebar::instance(); }
     UWNext_Code_Snippet::load_wpcode_file_cache();
 });
-add_filter('extra_theme_headers', function($headers) { $headers['UWNext']='UWNext'; return $headers; });
+add_filter('extra_theme_headers', function($headers) { $headers['UWNext']='UWNext'; $headers['UWMCP']='UWMCP'; $headers['WPVibe']='WPVibe'; return $headers; });
+add_filter('seedprod_allow_theme_display',array('UWNext_Preview','allow_seedprod_theme'));
+add_action('rest_api_init',array('UWNext_Content_Ops','register_divi_rest_hooks'));
 add_action('rest_api_init', array('UWNext_MCP','register'));
 add_action('rest_api_init', array('UWNext_Auth','register'));
 // Browser live-reload polling is the sole retained public handler route. WordPress
@@ -63,13 +67,7 @@ add_action('admin_post_uwnext_authorize', array('UWNext_Auth','authorize'));
 add_action('admin_post_nopriv_uwnext_authorize', array('UWNext_Auth','authorize'));
 add_action('application_password_did_authenticate', function($user,$item) { UWNext_Auth::$app = array('user'=>$user->ID,'uuid'=>$item['uuid']); },10,2);
 add_action('parse_request', array('UWNext_Auth','well_known'),0);
-add_action('wp_enqueue_scripts',function() {
-    $draft=get_option('uwnext_draft_theme');
-    if($draft && get_stylesheet()===$draft) {
-        wp_enqueue_style('uwnext-presets',UWNext_PLUGIN_URL.'assets/presets.css',array(),UWNext_VERSION);
-        wp_enqueue_script('uwnext-tailwind',UWNext_PLUGIN_URL.'assets/vendor/tailwind-browser.js',array(),'4.1.13',array('strategy'=>'defer'));
-    }
-});
+add_action('wp_enqueue_scripts',array('UWNext_Preview','enqueue_draft_assets'));
 add_action('rest_api_init',function() {
     if(!function_exists('wp_get_abilities')){return;}
     uwnext_register_internal_route(UWNext_NS,'/abilities',array('methods'=>'GET','permission_callback'=>function(){return current_user_can('manage_options');},'args'=>array(),'callback'=>function(){

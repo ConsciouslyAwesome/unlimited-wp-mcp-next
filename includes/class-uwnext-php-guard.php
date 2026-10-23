@@ -184,14 +184,16 @@ class UWNext_PHP_Guard {
 		$url      = add_query_arg( 'uwnext_health', wp_rand( 1000, 999999 ), home_url( '/' ) );
 		$response = wp_remote_get( $url, array(
 			'timeout'     => 20,
-			'sslverify'   => apply_filters( 'https_local_ssl_verify', false ),
-			'redirection' => 3,
+			'sslverify'   => true,
+			'redirection' => 0,
+            'limit_response_size' => 1048576,
 			'headers'     => array( 'Cache-Control' => 'no-cache', 'X-UWNext-Health' => '1' ),
 		) );
 		if ( is_wp_error( $response ) ) {
-			return null;
+			return new WP_Error('render_unavailable', 'The local render check could not reach the site; publishing must be rolled back.');
 		}
 		$status = (int) wp_remote_retrieve_response_code( $response );
+        if($status<200 || $status>=300) { return new WP_Error('render_http_error','The local render check did not return a successful HTTP status.'); }
 		$body   = (string) wp_remote_retrieve_body( $response );
 		if ( ! self::render_looks_fatal( $status, $body ) ) {
 			return true;

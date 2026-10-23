@@ -471,6 +471,11 @@ export const UPSTREAM_TOOLS = [
           "type": "boolean",
           "default": false
         },
+        "detach": {
+          "type": "boolean",
+          "default": false,
+          "description": "Queue the exact locally approved command once through WordPress cron; inspect operation_receipt instead of retrying."
+        },
         "approval_id": {
           "type": "string",
           "pattern": "^[a-f0-9]{48}$",
@@ -1128,10 +1133,13 @@ export const UPSTREAM_TOOLS = [
           "type": "string"
         },
         "old_content": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1048576
         },
         "new_content": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 1048576
         },
         "approval_id": {
           "type": "string",
@@ -1266,7 +1274,10 @@ export const UPSTREAM_TOOLS = [
           "default": false
         },
         "extensions": {
-          "type": "array"
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "max_results": {
           "type": "integer",
@@ -1304,7 +1315,8 @@ export const UPSTREAM_TOOLS = [
           "type": "string"
         },
         "content": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 1048576
         },
         "approval_id": {
           "type": "string",
@@ -1350,6 +1362,37 @@ export const UPSTREAM_TOOLS = [
     },
     "_meta": {
       "org.unlimitedwpmcp/permission": "edit_posts"
+    }
+  },
+  {
+    "name": "load_skill",
+    "description": "Load Skill. Uses the original WordPress handler and capability checks. Read operation. Requires manage_options plus the native endpoint permission callback where applicable.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "content",
+            "theme",
+            "builders",
+            "cli"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "_meta": {
+      "org.unlimitedwpmcp/permission": "manage_options plus the native endpoint permission callback where applicable"
     }
   },
   {
@@ -1458,7 +1501,7 @@ export const UPSTREAM_TOOLS = [
   },
   {
     "name": "rest_api_read",
-    "description": "Rest Api Read. Uses the original WordPress handler and capability checks. Read operation. Requires edit_post for target content plus the builder-specific permission callback.",
+    "description": "Rest Api Read. Uses the original WordPress handler and capability checks. Read operation. Requires manage_options plus the native endpoint permission callback where applicable.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1483,12 +1526,12 @@ export const UPSTREAM_TOOLS = [
       "openWorldHint": true
     },
     "_meta": {
-      "org.unlimitedwpmcp/permission": "edit_post for target content plus the builder-specific permission callback"
+      "org.unlimitedwpmcp/permission": "manage_options plus the native endpoint permission callback where applicable"
     }
   },
   {
     "name": "rest_api_write",
-    "description": "Rest Api Write. Uses the original WordPress handler and capability checks. Write or potentially destructive operation; requires local browser approval. Requires edit_post for target content plus the builder-specific permission callback.",
+    "description": "Rest Api Write. Uses the original WordPress handler and capability checks. Write or potentially destructive operation; requires local browser approval. Requires manage_options plus the native endpoint permission callback where applicable.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1503,6 +1546,7 @@ export const UPSTREAM_TOOLS = [
         "method": {
           "type": "string",
           "enum": [
+            "GET",
             "POST",
             "PUT",
             "PATCH",
@@ -1528,7 +1572,46 @@ export const UPSTREAM_TOOLS = [
       "openWorldHint": true
     },
     "_meta": {
-      "org.unlimitedwpmcp/permission": "edit_post for target content plus the builder-specific permission callback"
+      "org.unlimitedwpmcp/permission": "manage_options plus the native endpoint permission callback where applicable"
+    }
+  },
+  {
+    "name": "search_images",
+    "description": "Search Images. Uses the original WordPress handler and capability checks. Read operation. Requires manage_options plus the native endpoint permission callback where applicable.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "page": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 100
+        },
+        "limit": {
+          "type": "integer",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 20
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    },
+    "_meta": {
+      "org.unlimitedwpmcp/permission": "manage_options plus the native endpoint permission callback where applicable"
     }
   },
   {

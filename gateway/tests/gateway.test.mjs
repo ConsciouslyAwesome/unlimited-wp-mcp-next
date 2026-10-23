@@ -29,10 +29,10 @@ function response(body,status=200) {return new Response(JSON.stringify(body),{st
 function approvalResponse(site=B) {return response({jsonrpc:'2.0',id:1,result:{isError:true,content:[{type:'text',text:JSON.stringify({code:'approval_required',message:'Review',data:{status:409,approval_id:approval,expires:Math.floor(Date.now()/1000)+600,approval_url:site.canonical_url+'/wp-admin/admin.php?page=unlimited-wp-mcp&approval='+approval}})}]}});}
 async function issue(e,site=B) {globalThis.fetch=async()=>approvalResponse(site);const result=await rpc(e,'content_edit',{site:site.alias,target_type:'post',post_id:123,old_content:'before',new_content:'after'});assert.ok(result.body.result?.isError,'Fixture must reach approval gate');assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM approval_scopes').get().n,1);return result;}
 
-test('one shared 49-tool catalog plus discovery, explicit site on all tools',async()=>{
+test('one shared 51-tool catalog plus discovery, explicit site on all tools',async()=>{
   const e=await env(),r=await gateway.fetch(request('/mcp',{jsonrpc:'2.0',id:1,method:'tools/list'},''),e),body=await r.json();
-  assert.equal(body.result.tools.length,50);assert.equal(UPSTREAM_TOOLS.length,49);
-  assert.equal(UPSTREAM_TOOLS.filter(t=>t.annotations?.readOnlyHint).length,27);
+  assert.equal(body.result.tools.length,52);assert.equal(UPSTREAM_TOOLS.length,51);
+  assert.equal(UPSTREAM_TOOLS.filter(t=>t.annotations?.readOnlyHint).length,29);
   for(const t of body.result.tools.filter(t=>t.name!=='list_sites')) assert.ok(t.inputSchema.required.includes('site'));
   assert.ok(body.result.tools.some(t=>t.name==='delete_draft_theme' && !t.annotations.readOnlyHint));
 });

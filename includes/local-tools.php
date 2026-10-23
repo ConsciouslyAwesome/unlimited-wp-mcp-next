@@ -2,6 +2,18 @@
 defined('ABSPATH') || exit;
 /** Retain upstream route definitions as private in-process handler descriptors. */
 function uwnext_register_internal_route($namespace,$route,$definition,$override=false) {
+    if($route==='/cli/run') { $definition['args']['detach']=array('type'=>'boolean','default'=>false,'description'=>'Queue the exact locally approved command once through WordPress cron; inspect operation_receipt instead of retrying.'); }
+    if($route==='/file/write') { $definition['args']['content']['maxLength']=1048576; }
+    if($route==='/file/edit') {
+        $definition['args']['old_content']['minLength']=1;
+        $definition['args']['old_content']['maxLength']=1048576;
+        $definition['args']['new_content']['maxLength']=1048576;
+    }
+    if(isset($definition['args']['extensions'])) {
+        $definition['args']['extensions']['items']=array('type'=>'string');
+        // An extension is not a filename: core turns "css" into unnamed-file.css.
+        $definition['args']['extensions']['sanitize_callback']=function($value){return is_array($value)?array_map('sanitize_key',$value):array();};
+    }
     UWNext_Tools::$routes[$route][$definition['methods']]=$definition;
 }
 final class UWNext_Tools {
@@ -17,13 +29,15 @@ final class UWNext_Tools {
             foreach($methods as $method=>$def) {
                 $name=trim(str_replace(array('/','-'),array('_','_'),$route),'_');
                 if($route==='/draft-theme') { $name=$method==='DELETE'?'delete_draft_theme':'create_draft_theme'; }
-                $read=in_array($route,self::READ,true) || $route==='/abilities';
+                if($route==='/images/search') {$name='search_images';}
+                if($route==='/skill/load') {$name='load_skill';}
+                $read=in_array($route,self::READ,true) || in_array($route,array('/abilities','/images/search','/skill/load'),true);
                 $props=array(); $required=array();
                 foreach($def['args']??array() as $key=>$arg) {
-                    if(in_array($key,array('detach','approved_state'),true)) { continue; }
+                    if($key==='approved_state') { continue; }
                     $prop=array_intersect_key($arg,array_flip(array('type','enum','description','default','minimum','maximum','minLength','maxLength','pattern','items','properties','additionalProperties')));
                     if(empty($prop['type'])) { $prop['type']='string'; }
-                    if(($prop['type']??'')==='integer' && in_array($key,array('max_results','limit'),true)) { $prop['minimum']=1;$prop['maximum']=200; }
+                    if(($prop['type']??'')==='integer' && in_array($key,array('max_results','limit'),true)) { $prop['minimum']=max(1,$prop['minimum']??1);$prop['maximum']=min(200,$prop['maximum']??200); }
                     $props[$key]=$prop;
                     if(!empty($arg['required'])) { $required[]=$key; }
                 }
@@ -34,6 +48,7 @@ final class UWNext_Tools {
                 $callback=is_array($def['permission_callback']) ? $def['permission_callback'][1] : '';
                 $caps=array('can_manage_themes'=>'edit_theme_options','can_manage_options'=>'manage_options','can_edit_posts'=>'edit_posts','can_read_themes'=>'edit_themes (edit_theme_options on a locked single site)','can_read_files'=>'edit_themes for theme files; manage_options for wp-content; network administrator on multisite','can_edit_themes'=>'edit_themes; respects DISALLOW_FILE_EDIT and DISALLOW_FILE_MODS','can_publish_theme'=>'edit_themes and switch_themes','can_edit_content'=>'edit_post for the target post; manage_options for options','can_run_cli'=>'manage_options plus the command-specific capability','can_edit_code_snippets_approved'=>'wpcode_edit_snippets');
                 $cap=$caps[$callback]??(str_contains($route,'/ability') || $route==='/abilities'?'manage_options plus the ability permission callback':($route==='/upload-media'?'upload_files':'edit_post for target content plus the builder-specific permission callback'));
+                if(in_array($route,array('/images/search','/skill/load','/rest-api/read','/rest-api/write'),true)) {$cap='manage_options plus the native endpoint permission callback where applicable';}
                 $desc.=' Requires '.$cap.'.';
                 $tools[$name]=array('name'=>$name,'description'=>$desc,'inputSchema'=>array('type'=>'object','properties'=>(object)$props,'required'=>$required,'additionalProperties'=>false),'annotations'=>array('readOnlyHint'=>$read,'destructiveHint'=>!$read,'idempotentHint'=>$read,'openWorldHint'=>true),'_meta'=>array('org.unlimitedwpmcp/permission'=>$cap),'route'=>$route,'method'=>$method,'def'=>$def,'read'=>$read);
             }
@@ -108,6 +123,7 @@ final class UWNext_Tools {
             if(!UWNext_Store::consume('approval',$approval,$row)) { delete_option('uwnext_write_lock');return self::deny('approval_spent','Approval was already used.'); }
         }
         try {
+            if($name==='cli_run'&&!empty($req['detach'])) { return UWNext_Jobs::enqueue($op,$row); }
             if(!UWNext_Store::log($name,'started',$op)) { return self::deny('audit_unavailable','Local operation receipt could not be stored.',503); }
             $payload=$row?UWNext_Store::decrypt($row['payload']):null;
             if($row && !$payload) { UWNext_Store::log($name,'failed',$op);return self::deny('approval_unreadable','Approval cannot be decrypted.'); }
@@ -118,7 +134,12 @@ final class UWNext_Tools {
                 }
             }
             if($name==='cli_run') {
-                $out=(new UWNext_CLI())->run_approved($req['command'],(bool)$req['confirm_write'],isset($payload['preview']['operation'])?wp_json_encode($payload['preview']):null);
+                $cli=new UWNext_CLI();
+                // The local gate covers every CLI invocation. Only upstream
+                // destructive commands use its approved/snapshot execution path.
+                $out=isset($payload['preview']['operation'])
+                    ? $cli->run_approved($req['command'],(bool)$req['confirm_write'],wp_json_encode($payload['preview']))
+                    : $cli->run($req['command'],(bool)$req['confirm_write']);
             } else { self::$executing=!$tool['read']; $out=call_user_func($def['callback'],$req); }
             $failed=is_wp_error($out) || ($out instanceof WP_REST_Response && ($out->get_status()>=400 || (!empty($out->get_data()['exit_code']))));
             UWNext_Store::log($name,$failed?'failed':'completed',$op);

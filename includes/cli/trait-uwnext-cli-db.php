@@ -960,11 +960,11 @@ trait UWNext_CLI_Db {
 		$prefix   = '(?:' . implode( '|', array_map( function ( $p ) {
 			return preg_quote( $p, '/' );
 		}, $prefixes ) ) . ')';
-		if ( ! preg_match( '/^' . $prefix . '(?:\d+_)?(users|usermeta|options|sitemeta|site|blogs|uwnext_audit_log)$/i', (string) $name, $m ) ) {
+		if ( ! preg_match( '/^' . $prefix . '(?:\d+_)?(users|usermeta|options|sitemeta|site|blogs|uwnext_audit_log|uwnext_events|uwmcp_events|wpvibe_audit_log|wpvibe_op_receipts)$/i', (string) $name, $m ) ) {
 			return null;
 		}
 		$key = strtolower( $m[1] );
-		return 'uwnext_audit_log' === $key ? 'audit_log' : $key;
+		return in_array($key,array('uwnext_audit_log','uwnext_events','uwmcp_events','wpvibe_audit_log','wpvibe_op_receipts'),true) ? 'audit_log' : $key;
 	}
 
 	/**

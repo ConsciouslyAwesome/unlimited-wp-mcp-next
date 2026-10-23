@@ -53,3 +53,14 @@ function uwnext_setting_register( $key, $config ) {
 function uwnext_field_group_register( $post_type, $group_id, $config ) {
 	return UWNext_Fields::instance()->register_group( $post_type, $group_id, $config );
 }
+// Themes load after plugins_loaded. Define legacy template APIs only once all
+// active plugins have loaded, avoiding collisions when the upstream coexists.
+function uwnext_legacy_template_api() {
+    if(!function_exists('wpvibe_field_register')) { function wpvibe_field_register($type,$key,$config){return uwnext_field_register($type,$key,$config);} }
+    if(!function_exists('wpvibe_setting_register')) { function wpvibe_setting_register($key,$config){return uwnext_setting_register($key,$config);} }
+    if(!function_exists('wpvibe_field_group_register')) { function wpvibe_field_group_register($type,$key,$config){return uwnext_field_group_register($type,$key,$config);} }
+    if(!function_exists('uwmcp_field_register')) { function uwmcp_field_register($type,$key,$config){return uwnext_field_register($type,$key,$config);} }
+    if(!function_exists('uwmcp_setting_register')) { function uwmcp_setting_register($key,$config){return uwnext_setting_register($key,$config);} }
+    if(!function_exists('uwmcp_field_group_register')) { function uwmcp_field_group_register($type,$key,$config){return uwnext_field_group_register($type,$key,$config);} }
+}
+add_action('plugins_loaded','uwnext_legacy_template_api',5);

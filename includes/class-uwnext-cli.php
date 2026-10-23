@@ -44,14 +44,16 @@ class UWNext_CLI {
         if(null!==$this->find_unquoted_shell_char($command,str_starts_with($command,'db query'))) { return new WP_Error('shell_chars','Disallowed command characters.'); }
         // Plugin security state and upstream credentials are inaccessible through generic CLI.
         if(preg_match('/(?:uwnext|uwmcp|wpvibe)[_\\-]|vibe-ai|unlimited-wp-mcp/i',$command)) { return new WP_Error('protected_state','Plugin security state and self-management are protected.'); }
+        $this->db_query_glued_limit=null;
+        $this->db_query_raw=str_starts_with($command,'db query') ? $this->db_query_raw_statement(substr($command,8)) : null;
         $tokens=$this->tokenize($command);$resolved=$this->resolve_command($tokens);
         if(is_wp_error($resolved)){return $resolved;}
         if(!current_user_can($resolved['meta']['cap'])) { return new WP_Error('capability_denied','Required WordPress capability missing.'); }
         $key=implode(' ',array_slice($this->get_positional($tokens),0,$resolved['key_length']));
-        if($key==='search-replace') { return new WP_Error('protected_state','Broad database search-replace is disabled in this fork; use scoped content edits.'); }
-        if($key==='db query') { return new WP_Error('protected_state','Raw SQL is disabled through MCP. Use dedicated native WordPress commands.'); }
         $preview=$this->classify_destructive($key,$resolved['meta'],$this->strip_blocked_flags($tokens),$resolved['key_length']);
-        if(!empty($preview['refuse'])) { return $preview['refuse']; }
+        if(!empty($preview['refuse'])) {
+            return is_wp_error($preview['refuse']) ? $preview['refuse'] : new WP_Error('protected_state',(string)($preview['refuse']['stderr']??'Command refused by the native security policy.'),array('status'=>403));
+        }
         return $preview;
     }
 

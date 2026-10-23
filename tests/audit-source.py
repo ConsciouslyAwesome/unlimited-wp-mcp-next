@@ -20,7 +20,7 @@ for name in paths:
 source=git('show',f'{base}:includes/class-wpvibe-cli.php').decode()
 allow=source.split('const ALLOWLIST = array(',1)[1].split('\n\t);',1)[0]
 commands=re.findall(r"^\s*'([^']+)'\s*=>",allow,re.M)
-now=(repo/'includes/class-uwnext-cli.php').read_text()
+now=(repo/'includes/class-uwnext-cli.php').read_text(encoding='utf-8')
 newallow=now.split('const ALLOWLIST = array(',1)[1].split('\n\t);',1)[0]
 assert re.findall(r"^\s*'([^']+)'\s*=>",newallow,re.M)==commands
 license_hashes={}
@@ -40,8 +40,8 @@ for path in repo.rglob('*'):
     if re.search(r'(?:mcp[.])?wpvibe[.]ai|uwnext[.]ai|OHRBXR8-KUfiZbwG9dlBppJsfFiX58eA5kq_AAP4mhw',text,re.I):runtime_refs.append(str(path.relative_to(repo)))
 assert not runtime_refs,runtime_refs
 fixture=repo.parent/'.runtime/next-generation-fixture'
-catalog=json.loads((fixture/'catalog.json').read_text())['result']['tools']
-manifest={'status':'VERIFIED static inventory, NOT functional parity acceptance','upstream_sha':base,'fork':'https://github.com/ConsciouslyAwesome/unlimited-wp-mcp-next','hosted_domain_references':hosts,'upstream_route_registrations':routes,'network_and_protocol_review_locations':outbound,'cli_commands':commands,'cli_command_count':len(commands),'catalog_count':len(catalog),'catalog':catalog,'unchanged_notice_hashes':license_hashes,'runtime_vendor_domain_or_key_matches':runtime_refs,'pending':['raw SQL and search-replace own-state protection','multi-site gateway integration','independent hosted image-search and skill content','detached execution and browser builder orchestration','upstream self-update replaced by independent release workflow','runtime builder/theme/CLI parity coverage']}
+catalog=json.loads((fixture/'catalog.json').read_text(encoding='utf-8'))['result']['tools']
+manifest={'status':'VERIFIED static inventory, NOT functional parity acceptance','upstream_sha':base,'fork':'https://github.com/ConsciouslyAwesome/unlimited-wp-mcp-next','hosted_domain_references':hosts,'upstream_route_registrations':routes,'network_and_protocol_review_locations':outbound,'cli_commands':commands,'cli_command_count':len(commands),'catalog_count':len(catalog),'catalog':catalog,'unchanged_notice_hashes':license_hashes,'runtime_vendor_domain_or_key_matches':runtime_refs,'pending':['live MySQL and builder-specific acceptance','end-to-end multi-site gateway integration','live independent image-provider access','browser builder orchestration acceptance','independent verified release distribution']}
 out=repo.parent/'audit/next-generation'
 (out/'source-inventory.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
 print(f'PASS unchanged upstream notices; {len(commands)} CLI entries retained; {len(catalog)} tools; zero runtime vendor domains/keys')

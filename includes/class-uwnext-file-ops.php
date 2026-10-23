@@ -13,13 +13,68 @@ defined( 'ABSPATH' ) || exit;
  * File system note: This plugin uses PHP's native file functions rather than
  * WP_Filesystem. WP_Filesystem is designed for admin-UI plugins needing FTP/SSH
  * fallback. This plugin operates exclusively via REST API with application
- * password auth — no admin UI context for credential prompts.
+ * password auth â€” no admin UI context for credential prompts.
  *
  * Security is enforced via path sandboxing (realpath validation), extension
  * allowlist, PHP syntax validation, WordPress capability checks, and
  * DISALLOW_FILE_EDIT / DISALLOW_FILE_MODS respect.
  */
 class UWNext_File_Ops {
+	// Keep grep-like reads predictable on production themes with generated trees.
+	const SEARCH_MAX_ENTRIES = 5000;
+	const SEARCH_MAX_FILE_BYTES = 1048576;
+	const SEARCH_MAX_BYTES = 4194304;
+	const SEARCH_MAX_SECONDS = 5;
+	const SEARCH_MAX_RESULTS = 200;
+	const SEARCH_EXCLUDED_DIRECTORIES = array( '.git', '.hg', '.svn', 'bower_components', 'node_modules', 'vendor' );
+
+	// Bound directory listings independently of how many entries match a filter.
+	const LIST_MAX_ENTRIES = 5000;
+	const LIST_MAX_RESULTS = 5000;
+	const LIST_MAX_SECONDS = 5;
+	const READ_MAX_BYTES = 1048576;
+	const MUTATION_MAX_BYTES = 1048576;
+
+
+private function read_theme_file( $relative_path, $base_dir ) {
+		$full_path = $this->resolve_path( $relative_path, $base_dir );
+		if ( is_wp_error( $full_path ) ) {
+			return $full_path;
+		}
+		if ( ! file_exists( $full_path ) ) {
+			/* translators: %s: file path */
+			return new WP_Error( 'not_found', sprintf( __( 'File not found: %s', 'unlimited-wp-mcp-next' ), $relative_path ), UWNext_Error_Contract::data( 'not_found', false, array( 'status' => 404 ) ) );
+		}
+		if ( is_link( $full_path ) || ! is_file( $full_path ) || ! is_readable( $full_path ) ) {
+			return new WP_Error( 'forbidden_path', __( 'Only readable regular theme files without links are supported.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
+		}
+		$handle = @fopen( $full_path, 'rb' );
+		if ( false === $handle ) {
+			return new WP_Error( 'read_failed', __( 'Failed to open file.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 500 ) ) );
+		}
+		try {
+			$stat = fstat( $handle );
+			clearstatcache( true, $full_path );
+			$rechecked = $this->resolve_path( $relative_path, $base_dir );
+			$path_stat = is_wp_error( $rechecked ) ? false : lstat( $rechecked );
+			if ( ! $stat || ! $path_stat || $rechecked !== $full_path || $stat['dev'] !== $path_stat['dev'] || $stat['ino'] !== $path_stat['ino'] || ( $stat['mode'] & 0170000 ) !== 0100000 || $stat['nlink'] > 1 ) {
+				return new WP_Error( 'forbidden_path', __( 'Only stable regular theme files without links are supported.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
+			}
+			if ( $stat['size'] > self::READ_MAX_BYTES ) {
+				return new WP_Error( 'file_too_large', __( 'This theme file exceeds the 1 MiB read limit.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 413 ) ) );
+			}
+			$content = stream_get_contents( $handle, self::READ_MAX_BYTES + 1 );
+			if ( false === $content ) {
+				return new WP_Error( 'read_failed', __( 'Failed to read file.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 500 ) ) );
+			}
+			if ( strlen( $content ) > self::READ_MAX_BYTES ) {
+				return new WP_Error( 'file_too_large', __( 'This theme file exceeds the 1 MiB read limit.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 413 ) ) );
+			}
+			return array( 'path' => $full_path, 'content' => $content, 'file_bytes' => (int) $stat['size'] );
+		} finally {
+			fclose( $handle );
+		}
+	}
 
 	/** Allowed file extensions for write/create operations. SVG is stored only after UWNext_SVG_Sanitizer cleans it. */
 	const ALLOWED_EXTENSIONS = array( 'php', 'css', 'js', 'json', 'html', 'txt', 'svg' );
@@ -133,9 +188,27 @@ class UWNext_File_Ops {
 			return $this->compile_source_error( 'Cannot read draft source file: ' . $relative );
 		}
 		$limit = min( self::COMPILE_MAX_FILE_BYTES, self::COMPILE_MAX_BYTES - $bytes );
-		$content = file_get_contents( $path, false, null, 0, $limit + 1 );
-		if ( false === $content || strlen( $content ) > $limit ) {
-			return $this->compile_source_error( 'Cannot collect complete draft source within the byte limits: ' . $relative );
+		$handle = @fopen( $path, 'rb' );
+		if ( false === $handle ) {
+			return $this->compile_source_error( 'Cannot open draft source file: ' . $relative );
+		}
+		try {
+			$stat = fstat( $handle );
+			clearstatcache( true, $path );
+			$rechecked = $this->resolve_path( $relative, $dir );
+			$path_stat = is_wp_error( $rechecked ) ? false : lstat( $rechecked );
+			if ( ! $stat || ! $path_stat || $rechecked !== $path || $stat['dev'] !== $path_stat['dev'] || $stat['ino'] !== $path_stat['ino'] || ( $stat['mode'] & 0170000 ) !== 0100000 || $stat['nlink'] > 1 ) {
+				return $this->compile_source_error( 'Draft source must be a stable regular file without links: ' . $relative );
+			}
+			if ( $stat['size'] > $limit ) {
+				return $this->compile_source_error( 'Cannot collect complete draft source within the byte limits: ' . $relative );
+			}
+			$content = stream_get_contents( $handle, $limit + 1 );
+			if ( false === $content || strlen( $content ) > $limit ) {
+				return $this->compile_source_error( 'Cannot collect complete draft source within the byte limits: ' . $relative );
+			}
+		} finally {
+			fclose( $handle );
 		}
 		if ( ! preg_match( '//u', $content ) || ! preg_match( '//u', $relative ) ) {
 			return $this->compile_source_error( 'Draft source must be valid UTF-8: ' . $relative );
@@ -218,7 +291,7 @@ class UWNext_File_Ops {
 		if ( false === $base ) {
 			return new WP_Error( 'path_traversal', __( 'The theme directory could not be resolved.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
 		}
-		$full_path = $base . '/' . ltrim( $relative_path, '/' );
+		$full_path = rtrim($base, '/\\') . DIRECTORY_SEPARATOR . ltrim( $relative_path, '/' );
 
 		// Walk up to the nearest existing ancestor; new subdirs (e.g. dist/) are
 		// created later by write(), but realpath() needs an extant path here.
@@ -227,13 +300,13 @@ class UWNext_File_Ops {
 			$probe = dirname( $probe );
 		}
 		$real = realpath( $probe );
-		if ( false === $real || ( $real !== $base && strpos( $real, $base . '/' ) !== 0 ) ) {
+		if ( false === $real || ( $real !== $base && strpos( $real, rtrim($base, '/\\') . DIRECTORY_SEPARATOR ) !== 0 ) ) {
 			return new WP_Error( 'path_traversal', __( 'Resolved path is outside the draft theme.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
 		}
 		// The directory walk above cannot see a symlinked file; the file itself must resolve inside too.
 		if ( file_exists( $full_path ) ) {
 			$real_file = realpath( $full_path );
-			if ( false === $real_file || ( $real_file !== $base && strpos( $real_file, $base . '/' ) !== 0 ) ) {
+			if ( false === $real_file || ( $real_file !== $base && strpos( $real_file, rtrim($base, '/\\') . DIRECTORY_SEPARATOR ) !== 0 ) ) {
 				return new WP_Error( 'path_traversal', __( 'Resolved path is outside the draft theme.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
 			}
 		}
@@ -307,24 +380,24 @@ class UWNext_File_Ops {
 	 * @return true|WP_Error
 	 */
 	private function validate_php_syntax( $file_path ) {
-		$real_path = $file_path;
+		$real_path = preg_replace('/\.uwnext-[a-f0-9]{24}\.tmp$/D', '', $file_path);
 		$suffix    = '.uwnext-tmp';
 		if ( substr( $real_path, -strlen( $suffix ) ) === $suffix ) {
 			$real_path = substr( $real_path, 0, -strlen( $suffix ) );
 		}
 
-		if ( pathinfo( $real_path, PATHINFO_EXTENSION ) !== 'php' ) {
+		if ( strtolower(pathinfo( $real_path, PATHINFO_EXTENSION )) !== 'php' ) {
 			return true;
 		}
 
 		$fs = uwnext_fs();
 		if ( ! $fs ) {
-			return true;
+			return new WP_Error('php_validation_unavailable', 'Filesystem unavailable; PHP validation cannot safely proceed.');
 		}
 
 		$content = $fs->get_contents( $file_path );
 		if ( false === $content ) {
-			return true;
+			return new WP_Error('php_validation_unavailable', 'Could not read PHP source for validation.');
 		}
 
 		return uwnext_check_php_syntax( $content, basename( $real_path ) );
@@ -332,21 +405,21 @@ class UWNext_File_Ops {
 
 	/** php -l passes a redeclared function; the site fatals on load (#78). */
 	private function validate_php_redeclarations( $file_path ) {
-		$real_path = $file_path;
+		$real_path = preg_replace('/\.uwnext-[a-f0-9]{24}\.tmp$/D', '', $file_path);
 		$suffix    = '.uwnext-tmp';
 		if ( substr( $real_path, -strlen( $suffix ) ) === $suffix ) {
 			$real_path = substr( $real_path, 0, -strlen( $suffix ) );
 		}
-		if ( pathinfo( $real_path, PATHINFO_EXTENSION ) !== 'php' ) {
+		if ( strtolower(pathinfo( $real_path, PATHINFO_EXTENSION )) !== 'php' ) {
 			return true;
 		}
 		$fs = uwnext_fs();
 		if ( ! $fs ) {
-			return true;
+			return new WP_Error('php_validation_unavailable', 'Filesystem unavailable; PHP validation cannot safely proceed.');
 		}
 		$content = $fs->get_contents( $file_path );
 		if ( false === $content ) {
-			return true;
+			return new WP_Error('php_validation_unavailable', 'Could not read PHP source for validation.');
 		}
 		return UWNext_PHP_Guard::check_redeclarations( $content, $real_path );
 	}
@@ -364,24 +437,11 @@ class UWNext_File_Ops {
 		if ( is_wp_error( $source ) ) {
 			return $source;
 		}
-		$full_path = $this->resolve_path( $path, $source['dir'] );
-		if ( is_wp_error( $full_path ) ) {
-			return $full_path;
+		$file = $this->read_theme_file( $path, $source['dir'] );
+		if ( is_wp_error( $file ) ) {
+			return $file;
 		}
-
-		if ( ! file_exists( $full_path ) ) {
-			/* translators: %s: file path */
-			return new WP_Error( 'not_found', sprintf( __( 'File not found: %s', 'unlimited-wp-mcp-next' ), $path ), UWNext_Error_Contract::data( 'not_found', false, array( 'status' => 404 ) ) );
-		}
-
-		$fs = uwnext_fs();
-		if ( ! $fs ) {
-			return new WP_Error( 'fs_init', __( 'Unable to initialize WP_Filesystem.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'host_environment', false, array( 'status' => 500 ) ) );
-		}
-		$content = $fs->get_contents( $full_path );
-		if ( false === $content ) {
-			return new WP_Error( 'read_failed', __( 'Failed to read file.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 500 ) ) );
-		}
+		$content = $file['content'];
 
 		if ( null !== $start_line || null !== $end_line ) {
 			$lines      = explode( "\n", $content );
@@ -397,6 +457,8 @@ class UWNext_File_Ops {
 				'start_line' => $start + 1,
 				'end_line'   => $start + count( $slice ),
 				'total_lines' => $total,
+				'file_bytes'  => $file['file_bytes'],
+				'max_bytes'   => self::READ_MAX_BYTES,
 				'scope'      => $source['scope'],
 				'theme'      => $source['theme'],
 			'editable'   => $source['editable'],
@@ -407,6 +469,8 @@ class UWNext_File_Ops {
 			'path'        => $path,
 			'content'     => $content,
 			'total_lines' => substr_count( $content, "\n" ) + 1,
+			'file_bytes'  => $file['file_bytes'],
+			'max_bytes'   => self::READ_MAX_BYTES,
 			'scope'       => $source['scope'],
 			'theme'       => $source['theme'],
 			'editable'    => $source['editable'],
@@ -414,7 +478,7 @@ class UWNext_File_Ops {
 	}
 
 	/**
-	 * Edit a file using str_replace (old_content → new_content).
+	 * Edit a file using str_replace (old_content â†’ new_content).
 	 *
 	 * old_content must match exactly once in the file.
 	 *
@@ -430,28 +494,25 @@ class UWNext_File_Ops {
 	}
 
 	private function edit_locked( $path, $old_content, $new_content ) {
-		$full_path = $this->resolve_path( $path );
-		if ( is_wp_error( $full_path ) ) {
-			return $full_path;
+		if ( '' === $old_content ) {
+			return new WP_Error( 'invalid_content', __( 'old_content cannot be empty.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'invalid_input', false, array( 'status' => 422 ) ) );
 		}
-
-		if ( ! file_exists( $full_path ) ) {
-			/* translators: %s: file path */
-			return new WP_Error( 'not_found', sprintf( __( 'File not found: %s', 'unlimited-wp-mcp-next' ), $path ), UWNext_Error_Contract::data( 'not_found', false, array( 'status' => 404 ) ) );
+		if ( strlen( $old_content ) > self::MUTATION_MAX_BYTES || strlen( $new_content ) > self::MUTATION_MAX_BYTES ) {
+			return new WP_Error( 'file_too_large', __( 'File mutation content exceeds the 1 MiB limit.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'invalid_input', false, array( 'status' => 413 ) ) );
 		}
-
+		$draft_dir = $this->get_draft_dir();
+		if ( is_wp_error( $draft_dir ) ) {
+			return $draft_dir;
+		}
+		$file = $this->read_theme_file( $path, $draft_dir );
+		if ( is_wp_error( $file ) ) {
+			return $file;
+		}
+		$full_path = $file['path'];
 		if ( ! $this->is_allowed_extension( $full_path ) ) {
 			return new WP_Error( 'forbidden_ext', __( 'File extension not allowed for editing.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'not_supported', false, array( 'status' => 403 ) ) );
 		}
-
-		$fs = uwnext_fs();
-		if ( ! $fs ) {
-			return new WP_Error( 'fs_init', __( 'Unable to initialize WP_Filesystem.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'host_environment', false, array( 'status' => 500 ) ) );
-		}
-		$content = $fs->get_contents( $full_path );
-		if ( false === $content ) {
-			return new WP_Error( 'read_failed', __( 'Failed to read file.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 500 ) ) );
-		}
+		$content = $file['content'];
 		$count = substr_count( $content, $old_content );
 
 		if ( 0 === $count ) {
@@ -464,16 +525,21 @@ class UWNext_File_Ops {
 		}
 
 		$updated = str_replace( $old_content, $new_content, $content );
-
-		// An SVG is checked as a whole after the edit: a safe fragment can complete an unsafe one.
-		$prepared = $this->prepare_content( $full_path, $updated );
-		if ( is_wp_error( $prepared ) ) {
-			return $prepared;
+		if ( strlen( $updated ) > self::MUTATION_MAX_BYTES ) {
+			return new WP_Error( 'file_too_large', __( 'The edited file would exceed the 1 MiB mutation limit.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'invalid_input', false, array( 'status' => 413 ) ) );
 		}
-		$updated = $prepared['content'];
+		$fs = uwnext_fs();
+		if ( ! $fs ) {
+			return new WP_Error( 'fs_init', __( 'Unable to initialize WP_Filesystem.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'host_environment', false, array( 'status' => 500 ) ) );
+		}
 
+        $prepared=$this->prepare_content($full_path,$updated);
+        if(is_wp_error($prepared)){return $prepared;}
+        $updated=$prepared['content'];
 		// Write to a temp file first for PHP syntax check.
-		$tmp = $full_path . '.uwnext-tmp';
+		$tmp = $full_path . '.uwnext-' . bin2hex(random_bytes(12)) . '.tmp';
+        if(!($fs instanceof WP_Filesystem_Direct) || file_exists($tmp) || is_link($tmp)) { return new WP_Error('atomic_write_unavailable','A direct local filesystem and an unused temporary path are required.'); }
+        register_shutdown_function(static function() use ($tmp) { if(is_file($tmp) && !is_link($tmp)) { @unlink($tmp); } });
 		if ( ! $fs->put_contents( $tmp, $updated, FS_CHMOD_FILE ) ) {
 			return new WP_Error( 'write_failed', __( 'Failed to write temp file.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 500 ) ) );
 		}
@@ -489,7 +555,7 @@ class UWNext_File_Ops {
 			return $redeclare;
 		}
 
-		if ( ! $fs->copy( $tmp, $full_path, true, FS_CHMOD_FILE ) ) {
+		if ( ! @rename( $tmp, $full_path ) ) {
 			wp_delete_file( $tmp );
 			return new WP_Error(
 				'write_failed',
@@ -530,6 +596,9 @@ class UWNext_File_Ops {
 	}
 
 	private function write_locked( $path, $content ) {
+		if ( strlen( $content ) > self::MUTATION_MAX_BYTES ) {
+			return new WP_Error( 'file_too_large', __( 'File content exceeds the 1 MiB mutation limit.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'invalid_input', false, array( 'status' => 413 ) ) );
+		}
 		$full_path = $this->resolve_path( $path );
 		if ( is_wp_error( $full_path ) ) {
 			return $full_path;
@@ -539,12 +608,9 @@ class UWNext_File_Ops {
 			return new WP_Error( 'forbidden_ext', __( 'File extension not allowed.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'not_supported', false, array( 'status' => 403 ) ) );
 		}
 
-		$prepared = $this->prepare_content( $full_path, $content );
-		if ( is_wp_error( $prepared ) ) {
-			return $prepared;
-		}
-		$content = $prepared['content'];
-
+        $prepared=$this->prepare_content($full_path,$content);
+        if(is_wp_error($prepared)){return $prepared;}
+        $content=$prepared['content'];
 		// Ensure parent directory exists. mkdir failures here cascade into
 		// misleading "write_failed" errors below; surface the real cause.
 		$dir = dirname( $full_path );
@@ -570,7 +636,9 @@ class UWNext_File_Ops {
 		}
 
 		// Write to temp for syntax check.
-		$tmp = $full_path . '.uwnext-tmp';
+		$tmp = $full_path . '.uwnext-' . bin2hex(random_bytes(12)) . '.tmp';
+        if(!($fs instanceof WP_Filesystem_Direct) || file_exists($tmp) || is_link($tmp)) { return new WP_Error('atomic_write_unavailable','A direct local filesystem and an unused temporary path are required.'); }
+        register_shutdown_function(static function() use ($tmp) { if(is_file($tmp) && !is_link($tmp)) { @unlink($tmp); } });
 		if ( ! $fs->put_contents( $tmp, $content, FS_CHMOD_FILE ) ) {
 			return new WP_Error(
 				'write_failed',
@@ -594,7 +662,7 @@ class UWNext_File_Ops {
 			return $redeclare;
 		}
 
-		if ( ! $fs->copy( $tmp, $full_path, true, FS_CHMOD_FILE ) ) {
+		if ( ! @rename( $tmp, $full_path ) ) {
 			wp_delete_file( $tmp );
 			return new WP_Error(
 				'write_failed',
@@ -639,7 +707,7 @@ class UWNext_File_Ops {
 			return $full_path;
 		}
 
-		if ( ! file_exists( $full_path ) ) {
+		if ( ! file_exists( $full_path ) && ! is_link( $full_path ) ) {
 			/* translators: %s: file path */
 			return new WP_Error( 'not_found', sprintf( __( 'File not found: %s', 'unlimited-wp-mcp-next' ), $path ), UWNext_Error_Contract::data( 'not_found', false, array( 'status' => 404 ) ) );
 		}
@@ -648,7 +716,45 @@ class UWNext_File_Ops {
 			return new WP_Error( 'is_directory', __( 'Cannot delete directories. Only files can be deleted.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'not_supported', false, array( 'status' => 400 ) ) );
 		}
 
-		wp_delete_file( $full_path );
+		if ( is_link( $full_path ) || ! is_file( $full_path ) ) {
+			return new WP_Error( 'forbidden_path', __( 'Only regular draft theme files without links can be deleted.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
+		}
+
+		if ( ! $this->is_allowed_extension( $full_path ) ) {
+			return new WP_Error( 'forbidden_ext', __( 'File extension not allowed for deletion.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'not_supported', false, array( 'status' => 403 ) ) );
+		}
+
+		$handle = @fopen( $full_path, 'rb' );
+		if ( false === $handle ) {
+			return new WP_Error( 'delete_failed', __( 'Failed to open the file for safe deletion.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 500 ) ) );
+		}
+		try {
+			$stat = fstat( $handle );
+			clearstatcache( true, $full_path );
+			$rechecked = $this->resolve_path( $path );
+			$path_stat = is_wp_error( $rechecked ) ? false : lstat( $rechecked );
+			if ( ! $stat || ! $path_stat || $rechecked !== $full_path || $stat['dev'] !== $path_stat['dev'] || $stat['ino'] !== $path_stat['ino'] || ( $stat['mode'] & 0170000 ) !== 0100000 || $stat['nlink'] > 1 ) {
+				return new WP_Error( 'forbidden_path', __( 'Only stable regular draft theme files without links can be deleted.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
+			}
+		} finally {
+			fclose( $handle );
+		}
+
+		// Recheck identity after closing the handle for Windows compatibility.
+		clearstatcache( true, $full_path );
+		$rechecked = $this->resolve_path( $path );
+		$path_stat = is_wp_error( $rechecked ) ? false : lstat( $rechecked );
+		if ( ! $path_stat || $rechecked !== $full_path || $stat['dev'] !== $path_stat['dev'] || $stat['ino'] !== $path_stat['ino'] || ( $path_stat['mode'] & 0170000 ) !== 0100000 || $path_stat['nlink'] > 1 ) {
+			return new WP_Error( 'forbidden_path', __( 'The draft theme file changed before deletion.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 409 ) ) );
+		}
+
+		if ( ! @unlink( $full_path ) ) {
+			return new WP_Error( 'delete_failed', __( 'Failed to delete the draft theme file.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 500 ) ) );
+		}
+		clearstatcache( true, $full_path );
+		if ( file_exists( $full_path ) || is_link( $full_path ) ) {
+			return new WP_Error( 'delete_failed', __( 'The draft theme file still exists after deletion.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 500 ) ) );
+		}
 
 		UWNext_Change_Tracker::mark( array(
 			'summary'      => "File deleted: {$path}",
@@ -721,39 +827,65 @@ class UWNext_File_Ops {
 		$draft_dir = $source['dir'];
 
 		$draft_slug  = 'draft' === $source['scope'] ? $source['theme'] : null;
-		$max_entries = 5000;
 		$files       = array();
 		$truncated   = false;
+		$entries_seen = 0;
+		$deadline    = microtime( true ) + self::LIST_MAX_SECONDS;
+		$base        = realpath( $draft_dir );
+		if ( false === $base ) {
+			return new WP_Error( 'path_traversal', __( 'The theme directory could not be resolved.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
+		}
+		$base_prefix = rtrim( $base, '/\\' ) . DIRECTORY_SEPARATOR;
 
-		$iterator = new RecursiveIteratorIterator(
-			new RecursiveDirectoryIterator( $draft_dir, RecursiveDirectoryIterator::SKIP_DOTS ),
-			RecursiveIteratorIterator::SELF_FIRST
-		);
+		try {
+			$directory = new RecursiveDirectoryIterator( $base, RecursiveDirectoryIterator::SKIP_DOTS );
+			$filter = new RecursiveCallbackFilterIterator( $directory, function ( $item ) use ( $base, $base_prefix ) {
+				$name = $item->getFilename();
+				if ( $item->isLink() || ( '' !== $name && '.' === $name[0] ) ) {
+					return false;
+				}
+				if ( ! $item->isDir() ) {
+					return $item->isFile();
+				}
+				if ( in_array( strtolower( $name ), self::SEARCH_EXCLUDED_DIRECTORIES, true ) ) {
+					return false;
+				}
+				$real = realpath( $item->getPathname() );
+				return false !== $real && ( $real === $base || 0 === strpos( $real, $base_prefix ) );
+			} );
+			$iterator = new RecursiveIteratorIterator( $filter, RecursiveIteratorIterator::SELF_FIRST );
 
-		foreach ( $iterator as $item ) {
-			if ( count( $files ) >= $max_entries ) {
-				$truncated = true;
-				break;
+			foreach ( $iterator as $item ) {
+				if ( ++$entries_seen > self::LIST_MAX_ENTRIES || microtime( true ) > $deadline ) {
+					$truncated = true;
+					break;
+				}
+				$relative = str_replace( '\\', '/', $iterator->getSubPathName() );
+				$is_dir = $item->isDir();
+				if ( $pattern && ! $is_dir && ! fnmatch( $pattern, $relative, FNM_PATHNAME | FNM_CASEFOLD ) ) {
+					continue;
+				}
+				if ( count( $files ) >= self::LIST_MAX_RESULTS ) {
+					$truncated = true;
+					break;
+				}
+				$entry = array(
+					'path' => $relative,
+					'type' => $is_dir ? 'directory' : 'file',
+				);
+				if ( ! $is_dir ) {
+					$resolved = $this->resolve_path( $relative, $base );
+					if ( is_wp_error( $resolved ) || is_link( $resolved ) || ! is_file( $resolved ) ) {
+						$truncated = true;
+						continue;
+					}
+					$entry['size']      = $item->getSize();
+					$entry['extension'] = strtolower( pathinfo( $relative, PATHINFO_EXTENSION ) );
+				}
+				$files[] = $entry;
 			}
-
-			$relative = $iterator->getSubPathName();
-
-			// Apply glob pattern filter if provided.
-			if ( $pattern && ! $item->isDir() && ! self::path_matches( $pattern, $relative ) ) {
-				continue;
-			}
-
-			$entry = array(
-				'path' => $relative,
-				'type' => $item->isDir() ? 'directory' : 'file',
-			);
-
-			if ( ! $item->isDir() ) {
-				$entry['size']      = $item->getSize();
-				$entry['extension'] = strtolower( pathinfo( $relative, PATHINFO_EXTENSION ) );
-			}
-
-			$files[] = $entry;
+		} catch ( RuntimeException $e ) {
+			return new WP_Error( 'file_list_failed', __( 'Could not traverse all theme files. Check the theme directory permissions.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 400 ) ) );
 		}
 
 		$file_count = count( array_filter( $files, function ( $f ) {
@@ -790,68 +922,116 @@ class UWNext_File_Ops {
 		if ( empty( $pattern ) ) {
 			return new WP_Error( 'empty_pattern', __( 'Search pattern cannot be empty.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'invalid_input', false, array( 'status' => 400 ) ) );
 		}
+		$max_results = max( 1, min( self::SEARCH_MAX_RESULTS, (int) $max_results ) );
 
-		$allowed_ext   = $extensions ? $extensions : self::ALLOWED_EXTENSIONS;
-		$matches       = array();
+		$allowed_ext    = $extensions ? $extensions : self::ALLOWED_EXTENSIONS;
+		$matches        = array();
 		$files_searched = 0;
-		$truncated     = false;
+		$truncated      = false;
+		$entries_seen   = 0;
+		$bytes_searched = 0;
+		$deadline       = microtime( true ) + self::SEARCH_MAX_SECONDS;
 
 		$fs = uwnext_fs();
 		if ( ! $fs ) {
 			return new WP_Error( 'fs_init', __( 'Unable to initialize WP_Filesystem.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'host_environment', false, array( 'status' => 500 ) ) );
 		}
 
-		$iterator = new RecursiveIteratorIterator(
-			new RecursiveDirectoryIterator( $draft_dir, RecursiveDirectoryIterator::SKIP_DOTS ),
-			RecursiveIteratorIterator::LEAVES_ONLY
-		);
+		$base = realpath( $draft_dir );
+		if ( false === $base ) {
+			return new WP_Error( 'path_traversal', __( 'The theme directory could not be resolved.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
+		}
+		$base_prefix = rtrim( $base, '/\\' ) . DIRECTORY_SEPARATOR;
 
-		foreach ( $iterator as $item ) {
-			if ( $item->isDir() ) {
-				continue;
-			}
+		try {
+			$directory = new RecursiveDirectoryIterator( $base, RecursiveDirectoryIterator::SKIP_DOTS );
+			$filter = new RecursiveCallbackFilterIterator( $directory, function ( $item ) use ( $base, $base_prefix ) {
+				$name = $item->getFilename();
+				if ( $item->isLink() || ( '' !== $name && '.' === $name[0] ) ) {
+					return false;
+				}
+				if ( ! $item->isDir() ) {
+					return $item->isFile();
+				}
+				if ( in_array( strtolower( $name ), self::SEARCH_EXCLUDED_DIRECTORIES, true ) ) {
+					return false;
+				}
+				$real = realpath( $item->getPathname() );
+				return false !== $real && ( $real === $base || 0 === strpos( $real, $base_prefix ) );
+			} );
+			$iterator = new RecursiveIteratorIterator( $filter, RecursiveIteratorIterator::LEAVES_ONLY );
 
-			$ext = strtolower( pathinfo( $item->getFilename(), PATHINFO_EXTENSION ) );
-			if ( ! in_array( $ext, $allowed_ext, true ) ) {
-				continue;
-			}
-
-			$relative = $iterator->getSubPathName();
-			$content  = $fs->get_contents( $item->getPathname() );
-			if ( false === $content ) {
-				continue;
-			}
-			$lines    = explode( "\n", $content );
-			$files_searched++;
-
-			foreach ( $lines as $i => $line ) {
-				if ( count( $matches ) >= $max_results ) {
+			foreach ( $iterator as $item ) {
+				if ( ++$entries_seen > self::SEARCH_MAX_ENTRIES || microtime( true ) > $deadline ) {
 					$truncated = true;
-					break 2;
+					break;
 				}
 
-				$found = $case_sensitive
-					? ( strpos( $line, $pattern ) !== false )
-					: ( stripos( $line, $pattern ) !== false );
+				$ext = strtolower( pathinfo( $item->getFilename(), PATHINFO_EXTENSION ) );
+				if ( ! in_array( $ext, $allowed_ext, true ) ) {
+					continue;
+				}
 
-				if ( $found ) {
-					$match = array(
-						'file'    => $relative,
-						'line'    => $i + 1,
-						'content' => mb_substr( trim( $line ), 0, 200 ),
-					);
+				$size = $item->getSize();
+				if ( $size > self::SEARCH_MAX_FILE_BYTES ) {
+					$truncated = true;
+					continue;
+				}
+				if ( $bytes_searched + $size > self::SEARCH_MAX_BYTES ) {
+					$truncated = true;
+					break;
+				}
 
-					// Add 1 line of context above and below.
-					if ( $i > 0 ) {
-						$match['context_before'] = mb_substr( trim( $lines[ $i - 1 ] ), 0, 200 );
+				$relative = str_replace( '\\', '/', $iterator->getSubPathName() );
+				$resolved = $this->resolve_path( $relative, $base );
+				if ( is_wp_error( $resolved ) || is_link( $resolved ) || ! is_file( $resolved ) ) {
+					$truncated = true;
+					continue;
+				}
+				$content = $fs->get_contents( $resolved );
+				if ( false === $content ) {
+					continue;
+				}
+				$content_bytes = strlen( $content );
+				if ( $content_bytes > self::SEARCH_MAX_FILE_BYTES || $bytes_searched + $content_bytes > self::SEARCH_MAX_BYTES ) {
+					$truncated = true;
+					break;
+				}
+				$bytes_searched += $content_bytes;
+				$lines = explode( "\n", $content );
+				$files_searched++;
+
+				foreach ( $lines as $i => $line ) {
+					if ( count( $matches ) >= $max_results || microtime( true ) > $deadline ) {
+						$truncated = true;
+						break 2;
 					}
-					if ( $i < count( $lines ) - 1 ) {
-						$match['context_after'] = mb_substr( trim( $lines[ $i + 1 ] ), 0, 200 );
-					}
 
-					$matches[] = $match;
+					$found = $case_sensitive
+						? ( strpos( $line, $pattern ) !== false )
+						: ( stripos( $line, $pattern ) !== false );
+
+					if ( $found ) {
+						$match = array(
+							'file'    => $relative,
+							'line'    => $i + 1,
+							'content' => mb_substr( trim( $line ), 0, 200 ),
+						);
+
+						// Add 1 line of context above and below.
+						if ( $i > 0 ) {
+							$match['context_before'] = mb_substr( trim( $lines[ $i - 1 ] ), 0, 200 );
+						}
+						if ( $i < count( $lines ) - 1 ) {
+							$match['context_after'] = mb_substr( trim( $lines[ $i + 1 ] ), 0, 200 );
+						}
+
+						$matches[] = $match;
+					}
 				}
 			}
+		} catch ( RuntimeException $e ) {
+			return new WP_Error( 'file_search_failed', __( 'Could not traverse all theme files. Check the theme directory permissions.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 400 ) ) );
 		}
 
 		return rest_ensure_response( array(
@@ -877,24 +1057,12 @@ class UWNext_File_Ops {
 		if ( is_wp_error( $source ) ) {
 			return $source;
 		}
-		$full_path = $this->resolve_path( $path, $source['dir'] );
-		if ( is_wp_error( $full_path ) ) {
-			return $full_path;
+		$file = $this->read_theme_file( $path, $source['dir'] );
+		if ( is_wp_error( $file ) ) {
+			return $file;
 		}
-
-		if ( ! file_exists( $full_path ) ) {
-			/* translators: %s: file path */
-			return new WP_Error( 'not_found', sprintf( __( 'File not found: %s', 'unlimited-wp-mcp-next' ), $path ), UWNext_Error_Contract::data( 'not_found', false, array( 'status' => 404 ) ) );
-		}
-
-		$fs = uwnext_fs();
-		if ( ! $fs ) {
-			return new WP_Error( 'fs_init', __( 'Unable to initialize WP_Filesystem.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'host_environment', false, array( 'status' => 500 ) ) );
-		}
-		$content = $fs->get_contents( $full_path );
-		if ( false === $content ) {
-			return new WP_Error( 'read_failed', __( 'Failed to read file.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 500 ) ) );
-		}
+		$full_path = $file['path'];
+		$content = $file['content'];
 		$lines       = explode( "\n", $content );
 		$total_lines = count( $lines );
 		$ext         = strtolower( pathinfo( $full_path, PATHINFO_EXTENSION ) );
@@ -1009,6 +1177,8 @@ class UWNext_File_Ops {
 			'path'        => $path,
 			'type'        => $ext,
 			'total_lines' => $total_lines,
+			'file_bytes'  => $file['file_bytes'],
+			'max_bytes'   => self::READ_MAX_BYTES,
 			'outline'     => $outline,
 			'scope'       => $source['scope'],
 			'theme'       => $source['theme'],
