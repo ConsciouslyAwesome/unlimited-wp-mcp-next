@@ -41,11 +41,11 @@
 			</div>
 
 			<nav class="mt-12 flex justify-between text-sm">
-				<?php echo get_previous_posts_link( '&larr; ' . esc_html__( 'Newer posts', 'vibe-ai' ) ); ?>
-				<?php echo get_next_posts_link( esc_html__( 'Older posts', 'vibe-ai' ) . ' &rarr;' ); ?>
+				<?php echo get_previous_posts_link( '&larr; ' . esc_html__( 'Newer posts', 'unlimited-wp-mcp-next' ) ); ?>
+				<?php echo get_next_posts_link( esc_html__( 'Older posts', 'unlimited-wp-mcp-next' ) . ' &rarr;' ); ?>
 			</nav>
 		<?php else : ?>
-			<p class="text-secondary-600"><?php esc_html_e( 'Nothing to show here yet.', 'vibe-ai' ); ?></p>
+			<p class="text-secondary-600"><?php esc_html_e( 'Nothing to show here yet.', 'unlimited-wp-mcp-next' ); ?></p>
 		<?php endif; ?>
 	</div>
 </main>

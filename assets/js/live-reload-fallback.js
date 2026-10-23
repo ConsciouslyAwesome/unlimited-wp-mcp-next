@@ -1,13 +1,13 @@
 document.addEventListener( 'DOMContentLoaded', function () {
 	'use strict';
-	if ( window.__wpvibe_live_reload ) return;
+	if ( window.__uwnext_live_reload ) return;
 
-	var config = window.wpvibeLiveReloadFallback;
-	if ( ! config || ! config.endpoint || ! window.WPVibePoller ) return;
+	var config = window.uwnextLiveReloadFallback;
+	if ( ! config || ! config.endpoint || ! window.UWNextPoller ) return;
 
 	var userId = parseInt( config.userId, 10 ) || 0;
 	var lastTs = 0;
-	window.WPVibePoller.start( {
+	window.UWNextPoller.start( {
 		url: function () { return config.endpoint; },
 		nonce: config.nonce,
 		interval: 5000,
