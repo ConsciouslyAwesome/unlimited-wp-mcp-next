@@ -9,10 +9,10 @@
 	<section class="max-w-2xl mx-auto px-6 py-24 text-center">
 		<p class="text-sm uppercase tracking-wider text-secondary-600">404</p>
 		<h1 class="mt-3 text-4xl md:text-5xl font-bold tracking-tight text-neutral">
-			<?php esc_html_e( "We can't find that page.", 'vibe-ai' ); ?>
+			<?php esc_html_e( "We can't find that page.", 'unlimited-wp-mcp-next' ); ?>
 		</h1>
 		<p class="mt-4 text-secondary-700">
-			<?php esc_html_e( 'It may have been moved, renamed, or never existed. Try a search or head back home.', 'vibe-ai' ); ?>
+			<?php esc_html_e( 'It may have been moved, renamed, or never existed. Try a search or head back home.', 'unlimited-wp-mcp-next' ); ?>
 		</p>
 
 		<div class="mt-10 max-w-md mx-auto">
@@ -21,7 +21,7 @@
 
 		<p class="mt-8">
 			<a href="<?php echo esc_url( home_url( '/' ) ); ?>" class="inline-flex items-center text-primary-500 hover:underline">
-				&larr; <?php esc_html_e( 'Back to {{THEME_NAME_PHP}}', 'vibe-ai' ); ?>
+				&larr; <?php esc_html_e( 'Back to {{THEME_NAME_PHP}}', 'unlimited-wp-mcp-next' ); ?>
 			</a>
 		</p>
 	</section>

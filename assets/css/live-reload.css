@@ -1,4 +1,4 @@
-#wpvibe-reload-toast {
+#uwnext-reload-toast {
 	position: fixed;
 	top: 40px;
 	right: 20px;
@@ -14,10 +14,10 @@
 	align-items: center;
 	gap: 12px;
 	max-width: 400px;
-	animation: wpvibe-slide-in 0.3s ease;
+	animation: uwnext-slide-in 0.3s ease;
 }
 
-#wpvibe-reload-toast .wpvibe-toast-dot {
+#uwnext-reload-toast .uwnext-toast-dot {
 	width: 8px;
 	height: 8px;
 	border-radius: 50%;
@@ -25,12 +25,12 @@
 	flex-shrink: 0;
 }
 
-#wpvibe-reload-toast .wpvibe-toast-text {
+#uwnext-reload-toast .uwnext-toast-text {
 	flex: 1;
 	line-height: 1.4;
 }
 
-#wpvibe-reload-toast .wpvibe-toast-btn {
+#uwnext-reload-toast .uwnext-toast-btn {
 	background: #3b82f6;
 	color: #fff;
 	border: none;
@@ -44,11 +44,11 @@
 	text-decoration: none;
 }
 
-#wpvibe-reload-toast .wpvibe-toast-btn:hover {
+#uwnext-reload-toast .uwnext-toast-btn:hover {
 	background: #2563eb;
 }
 
-#wpvibe-reload-toast .wpvibe-toast-dismiss {
+#uwnext-reload-toast .uwnext-toast-dismiss {
 	background: none;
 	border: none;
 	color: #94a3b8;
@@ -59,7 +59,7 @@
 	flex-shrink: 0;
 }
 
-@keyframes wpvibe-slide-in {
+@keyframes uwnext-slide-in {
 	from {
 		transform: translateX(100%);
 		opacity: 0;

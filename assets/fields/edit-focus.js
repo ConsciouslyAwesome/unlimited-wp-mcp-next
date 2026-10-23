@@ -1,9 +1,9 @@
 /**
  * Admin-side companion for the hover-to-edit affordance. Reads the URL
- * hash on load; if it matches #wpvibe-field-{key}, scrolls the matching
+ * hash on load; if it matches #uwnext-field-{key}, scrolls the matching
  * input into view, focuses it, and briefly flashes the surrounding row.
  *
- * The field renderer emits id="wpvibe-field-{key}" on each registered
+ * The field renderer emits id="uwnext-field-{key}" on each registered
  * input, so this works without any per-field wiring.
  */
 (function () {
@@ -11,7 +11,7 @@
 
 	function focusFromHash() {
 		var hash = location.hash || '';
-		if ( hash.indexOf( '#wpvibe-field-' ) !== 0 ) {
+		if ( hash.indexOf( '#uwnext-field-' ) !== 0 ) {
 			return;
 		}
 		var id    = hash.slice( 1 );
@@ -29,11 +29,11 @@
 		// scroll target on some browsers.
 		setTimeout( function () { input.focus(); }, 250 );
 
-		var row = input.closest && input.closest( '.wpvibe-field-row' );
+		var row = input.closest && input.closest( '.uwnext-field-row' );
 		if ( row ) {
-			row.classList.add( 'wpvibe-field-row-flash' );
+			row.classList.add( 'uwnext-field-row-flash' );
 			setTimeout( function () {
-				row.classList.remove( 'wpvibe-field-row-flash' );
+				row.classList.remove( 'uwnext-field-row-flash' );
 			}, 1600 );
 		}
 	}
@@ -44,7 +44,7 @@
 		focusFromHash();
 	}
 
-	// Same-page anchor clicks (e.g. from the WPVibe sidebar field list)
+	// Same-page anchor clicks (e.g. from the UWNext sidebar field list)
 	// fire hashchange after the browser scrolls; re-run the focus + flash
 	// so a click on a sidebar field has the same effect as arriving with
 	// the hash already in the URL.

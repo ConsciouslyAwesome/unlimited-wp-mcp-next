@@ -1,0 +1,2316 @@
+<?php
+/** Derived from Awesome Motive / SeedProd WPVibe 1.20.5; modified 2026-10-22 for Unlimited WP MCP Next. GPL-2.0-or-later; see UPSTREAM.md. */
+/**
+ * REST API endpoint registration for UWNext.
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+class UWNext_REST {
+
+	private static $instance = null;
+
+	public static function instance() {
+		if ( null === self::$instance ) {
+			self::$instance = new self();
+		}
+		return self::$instance;
+	}
+
+	/**
+	 * Sanitize file content — validates string type only.
+	 * Must NOT strip HTML/newlines as these contain source code.
+	 */
+	public static function sanitize_file_content( $value ) {
+		return is_string( $value ) ? $value : '';
+	}
+
+	/**
+	 * Let Application Passwords authenticate REST requests before REST_REQUEST exists.
+	 *
+	 * Core only marks a request as an API request at parse_request, so plugins that
+	 * resolve the current user on init run app-password requests as user 0 there.
+	 * Site Kit freezes its per-user Google auth storage at init -999 that way and
+	 * then fails every data request with missing_required_scopes. Marking
+	 * REST-prefixed paths as API requests lets the same credentials resolve first.
+	 *
+	 * Only applies when the Basic username maps to a real user — see
+	 * basic_auth_user_exists() for why non-user credentials must pass through.
+	 *
+	 * @param bool $is_api_request Whether core already considers this an API request.
+	 * @return bool
+	 */
+	public static function application_password_is_api_request( $is_api_request ) {
+		if ( $is_api_request ) {
+			return $is_api_request;
+		}
+		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$path        = wp_parse_url( $request_uri, PHP_URL_PATH );
+		if ( ! is_string( $path ) || '' === $path ) {
+			return false;
+		}
+		// Plain-permalink REST only routes through the front controller; direct scripts (admin-ajax.php) never carry rest_route.
+		if ( isset( $_GET['rest_route'] ) && ( false === strpos( $path, '.php' ) || 'index.php' === basename( $path ) ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			return self::basic_auth_user_exists();
+		}
+		$home_path = (string) wp_parse_url( home_url(), PHP_URL_PATH );
+		$prefix    = rtrim( $home_path, '/' ) . '/' . rest_get_url_prefix();
+		if ( $path !== $prefix && 0 !== strpos( $path, $prefix . '/' ) ) {
+			return false;
+		}
+		return self::basic_auth_user_exists();
+	}
+
+	/**
+	 * Whether the request's Basic username could ever validate as an app password.
+	 *
+	 * App-password auth for a nonexistent username can only hard-fail: core stores
+	 * the invalid_username error and rest_authentication_errors returns it even
+	 * after another handler authenticates. Services sending WooCommerce ck_/cs_
+	 * keys as Basic credentials (TrackShip, Metorik) got blanket 401s that way,
+	 * so a credential that maps to no user must not trigger the early marking.
+	 *
+	 * @return bool
+	 */
+	private static function basic_auth_user_exists() {
+		// empty() (not isset) to agree with UWNext_Auth_Fallback::has_server_credentials(),
+		// and is_string() because a crafted array here fatals inside core on PHP 8.
+		if ( empty( $_SERVER['PHP_AUTH_USER'] ) || ! is_string( $_SERVER['PHP_AUTH_USER'] ) ) {
+			// Core skips app-password auth entirely without PHP_AUTH_*, so marking is harmless.
+			return true;
+		}
+		// get_user_by() is pluggable — undefined when the auth fallback calls this
+		// filter at plugin-file-load time, before pluggable.php.
+		if ( ! function_exists( 'get_user_by' ) ) {
+			return true;
+		}
+		// Raw value, not unslashed: core hands $_SERVER['PHP_AUTH_USER'] to
+		// wp_authenticate_application_password() as-is, and this must mirror
+		// exactly the lookup core will perform.
+		$username = $_SERVER['PHP_AUTH_USER']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
+		if ( get_user_by( 'login', $username ) ) {
+			return true;
+		}
+		return (bool) ( is_email( $username ) && get_user_by( 'email', $username ) );
+	}
+
+	/**
+	 * Resolve a sideload filename that ends in a real image extension.
+	 *
+	 * A title like "CleanShot 2026-06-29 at 14.45.58@2x" makes pathinfo() read
+	 * "58@2x" (from the time) as the extension, so trusting *any* non-empty
+	 * extension lets a bogus one through and media_handle_sideload() rejects the
+	 * upload as a disallowed file type. Only trust a known image extension;
+	 * otherwise append the correct one from the file's actual mime. SVG is
+	 * admin-only since it can carry script.
+	 *
+	 * @param string $filename       Candidate filename (already sanitized).
+	 * @param string $detected_mime  Real mime of the file (wp_get_image_mime/fileinfo).
+	 * @param bool   $allow_svg      Whether the current user may upload SVG.
+	 * @return string Filename guaranteed to end in a real image extension.
+	 */
+	public static function ensure_image_extension( $filename, $detected_mime, $allow_svg ) {
+		$known = array( 'jpg', 'jpeg', 'png', 'gif', 'webp' );
+		if ( $allow_svg ) {
+			$known[] = 'svg';
+		}
+		// Trust the parsed extension only if it is already a real image extension;
+		// a dotted title ("…14.45.58@2x") yields a bogus "58@2x" that pathinfo()
+		// reports as an extension but wp_check_filetype_and_ext() rejects.
+		$current = strtolower( (string) pathinfo( $filename, PATHINFO_EXTENSION ) );
+		if ( in_array( $current, $known, true ) ) {
+			return $filename;
+		}
+		// Otherwise append the proper extension for the real mime, via WP's own
+		// mime->extension map. SVG is admin-only (it can carry script).
+		$ext = $detected_mime ? wp_get_default_extension_for_mime_type( $detected_mime ) : '';
+		if ( ! $ext || ( 'svg' === $ext && ! $allow_svg ) ) {
+			$ext = 'jpg';
+		}
+		return $filename . '.' . $ext;
+	}
+
+	/**
+	 * Validate that a URL is safe to fetch from a public server context.
+	 *
+	 * Rejects non-HTTP(S) schemes and hosts that resolve (IPv4 or IPv6) to any
+	 * private/loopback/link-local/reserved range. Mitigates SSRF to cloud
+	 * metadata endpoints (169.254.169.254, fd00::/8), loopback, RFC1918, etc.
+	 * Pair with the http_request_redirection_url filter to also catch
+	 * 302-to-internal-address.
+	 *
+	 * @param string $url URL to validate.
+	 * @return true|WP_Error
+	 */
+	public static function validate_public_http_url( $url ) {
+		$parts = wp_parse_url( $url );
+		if ( empty( $parts['scheme'] ) || ! in_array( strtolower( $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
+			return new WP_Error( 'blocked_url', __( 'Only http(s) URLs are allowed.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
+		}
+		if ( empty( $parts['host'] ) ) {
+			return new WP_Error( 'blocked_url', __( 'URL host is missing.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
+		}
+
+		$host = $parts['host'];
+
+		// If the host is already an IP literal, validate it directly.
+		if ( filter_var( $host, FILTER_VALIDATE_IP ) ) {
+			if ( ! self::ip_is_public( $host ) ) {
+				return new WP_Error( 'blocked_url', __( 'URL resolves to a non-public address.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
+			}
+			return true;
+		}
+
+		// Resolve every A + AAAA record; reject if the host can't be resolved or
+		// *any* answer is non-public. Same resolver used to pin the download.
+		if ( empty( self::resolve_public_ips( $host ) ) ) {
+			return new WP_Error( 'blocked_url', __( 'URL host could not be resolved or resolves to a non-public address.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
+		}
+
+		return true;
+	}
+
+	private static function ip_is_public( $ip ) {
+		return (bool) filter_var(
+			$ip,
+			FILTER_VALIDATE_IP,
+			FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+		);
+	}
+
+	/**
+	 * Resolve a host to its public A/AAAA addresses. Returns an empty array if
+	 * the host can't be resolved or any answer is non-public — callers pin to
+	 * these IPs and must fail closed on an empty result.
+	 */
+	public static function resolve_public_ips( $host ) {
+		$ips     = array();
+		$records = @dns_get_record( $host, DNS_A + DNS_AAAA );
+		if ( ! empty( $records ) ) {
+			foreach ( $records as $record ) {
+				if ( ! empty( $record['ip'] ) ) {
+					$ips[] = $record['ip'];
+				} elseif ( ! empty( $record['ipv6'] ) ) {
+					$ips[] = $record['ipv6'];
+				}
+			}
+		}
+		if ( empty( $ips ) ) {
+			$v4 = @gethostbynamel( $host );
+			if ( ! empty( $v4 ) ) {
+				$ips = $v4;
+			}
+		}
+
+		$public = array();
+		foreach ( $ips as $ip ) {
+			if ( ! self::ip_is_public( $ip ) ) {
+				return array();
+			}
+			$public[] = $ip;
+		}
+		return $public;
+	}
+
+	private function __construct() {
+		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
+		add_filter( 'rest_post_dispatch', array( $this, 'track_rest_changes' ), 10, 3 );
+		add_filter( 'rest_pre_dispatch', array( $this, 'decode_armored_params' ), 10, 3 );
+	}
+
+	/**
+	 * Params the MCP Worker may base64-armor to get code-bearing bodies past
+	 * host WAFs that regex-block them (Hostinger hCDN, ModSecurity). Decoding
+	 * happens in rest_pre_dispatch, before validation, so every sanitizer,
+	 * capability check, and classifier downstream sees the same value a plain
+	 * request would have carried.
+	 */
+	private static $armorable_params = array( 'content', 'old_content', 'new_content', 'command', 'code' );
+
+	public function decode_armored_params( $result, $server, $request ) {
+		if ( null !== $result ) {
+			return $result;
+		}
+		$route = $request->get_route();
+		if ( ! is_string( $route ) || 0 !== strpos( $route, '/unlimited-wp-mcp-next/v1/' ) ) {
+			return $result;
+		}
+		$marker = $request->get_param( '_uwnext_armor' );
+		if ( ! is_string( $marker ) || '' === $marker ) {
+			return $result;
+		}
+		foreach ( array_map( 'trim', explode( ',', $marker ) ) as $name ) {
+			if ( ! in_array( $name, self::$armorable_params, true ) ) {
+				/* translators: %s: parameter name */
+				return new WP_Error( 'bad_armor_param', sprintf( __( 'Parameter "%s" cannot be armor-encoded.', 'unlimited-wp-mcp-next' ), $name ), array( 'status' => 400 ) );
+			}
+			$value = $request->get_param( $name );
+			if ( ! is_string( $value ) ) {
+				continue;
+			}
+			$decoded = base64_decode( $value, true );
+			if ( false === $decoded ) {
+				/* translators: %s: parameter name */
+				return new WP_Error( 'bad_base64', sprintf( __( 'Parameter "%s" is not valid base64. Armored params must be standard base64 (no URL-safe alphabet, no line breaks).', 'unlimited-wp-mcp-next' ), $name ), array( 'status' => 400 ) );
+			}
+			$request->set_param( $name, $decoded );
+		}
+		return $result;
+	}
+
+	public function register_routes() {
+		$namespace = UWNext_NS;
+
+		// Site info — requires edit_theme_options (matches WP core /wp/v2/themes).
+		uwnext_register_internal_route( $namespace, '/site-info', array(
+			'methods'             => 'GET',
+			'callback'            => array( $this, 'get_site_info' ),
+			'permission_callback' => array( $this, 'can_manage_themes' ),
+			'args'                => array(),
+		) );
+
+		// Diagnostic — list REST-exposed meta registered for a post type.
+		// Useful when WP silently drops meta from a /wp/v2/<cpt>/<id> write
+		// because the key isn't registered with show_in_rest=true.
+		uwnext_register_internal_route( $namespace, '/registered-meta', array(
+			'methods'             => 'GET',
+			'callback'            => array( $this, 'get_registered_meta' ),
+			'permission_callback' => array( $this, 'can_manage_themes' ),
+			'args'                => array(
+				'post_type' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => 'sanitize_key',
+				),
+			),
+		) );
+
+		// --- File read operations (edit_themes capability) ---
+
+		uwnext_register_internal_route( $namespace, '/file/read', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'read_file' ),
+			'permission_callback' => array( $this, 'can_read_files' ),
+			'args'                => array(
+				'scope' => array( 'type' => 'string', 'enum' => array( 'theme', 'wp-content' ) ),
+				'path' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'start_line' => array(
+					'type'              => 'integer',
+					'required'          => false,
+					'sanitize_callback' => 'absint',
+				),
+				'end_line' => array(
+					'type'              => 'integer',
+					'required'          => false,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/file/list', array(
+			'methods'             => 'GET',
+			'callback'            => array( $this, 'list_files' ),
+			'permission_callback' => array( $this, 'can_read_files' ),
+			'args'                => array(
+				'scope' => array( 'type' => 'string', 'enum' => array( 'theme', 'wp-content' ) ),
+				'directory' => array( 'type' => 'string' ),
+				'pattern' => array(
+					'type'              => 'string',
+					'required'          => false,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+			),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/file/search', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'search_files' ),
+			'permission_callback' => array( $this, 'can_read_themes' ),
+			'args'                => array(
+				'pattern' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'case_sensitive' => array(
+					'type'    => 'boolean',
+					'default' => false,
+				),
+				'extensions' => array(
+					'type'              => 'array',
+					'required'          => false,
+					'sanitize_callback' => function( $value ) {
+						return is_array( $value ) ? array_map( 'sanitize_file_name', $value ) : array();
+					},
+				),
+				'max_results' => array(
+					'type'              => 'integer',
+					'default'           => 100,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/file/outline', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'file_outline' ),
+			'permission_callback' => array( $this, 'can_read_themes' ),
+			'args'                => array(
+				'path' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+			),
+		) );
+
+		// --- File write operations (edit_themes + DISALLOW_FILE_EDIT check) ---
+
+		uwnext_register_internal_route( $namespace, '/file/edit', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'edit_file' ),
+			'permission_callback' => array( $this, 'can_edit_themes' ),
+			'args'                => array(
+				'path' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'old_content' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => array( 'UWNext_REST', 'sanitize_file_content' ),
+				),
+				'new_content' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => array( 'UWNext_REST', 'sanitize_file_content' ),
+				),
+			),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/file/write', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'write_file' ),
+			'permission_callback' => array( $this, 'can_edit_themes' ),
+			'args'                => array(
+				'expected_source_hash' => array( 'type' => 'string', 'pattern' => '^[a-f0-9]{64}$' ),
+				'path' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'content' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => array( 'UWNext_REST', 'sanitize_file_content' ),
+				),
+			),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/file/delete', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'delete_file' ),
+			'permission_callback' => array( $this, 'can_edit_themes' ),
+			'args'                => array(
+				'path' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+			),
+		) );
+
+		// --- Database content operations (surgical str_replace on posts/meta/options) ---
+
+		uwnext_register_internal_route( $namespace, '/content/edit', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'edit_content' ),
+			'permission_callback' => array( $this, 'can_edit_content' ),
+			'args'                => array(
+				'target_type' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'enum'              => array( 'post', 'meta', 'option' ),
+					'sanitize_callback' => 'sanitize_key',
+				),
+				'post_id'     => array( 'type' => 'integer', 'required' => false ),
+				'field'       => array( 'type' => 'string', 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
+				'meta_key'    => array( 'type' => 'string', 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+				'option_name' => array( 'type' => 'string', 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+				'old_content' => array( 'type' => 'string', 'required' => true, 'sanitize_callback' => array( 'UWNext_REST', 'sanitize_file_content' ) ),
+				'new_content' => array( 'type' => 'string', 'required' => true, 'sanitize_callback' => array( 'UWNext_REST', 'sanitize_file_content' ) ),
+				'replace_all' => array( 'type' => 'boolean', 'required' => false, 'default' => false ),
+				'whole_word'  => array( 'type' => 'boolean', 'required' => false, 'default' => false ),
+			),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/content/search', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'search_content' ),
+			'permission_callback' => array( $this, 'can_edit_content' ),
+			'args'                => array(
+				'target_type'    => array(
+					'type'              => 'string',
+					'required'          => true,
+					'enum'              => array( 'post', 'meta', 'option' ),
+					'sanitize_callback' => 'sanitize_key',
+				),
+				'post_id'        => array( 'type' => 'integer', 'required' => false ),
+				'field'          => array( 'type' => 'string', 'required' => false, 'sanitize_callback' => 'sanitize_key' ),
+				'meta_key'       => array( 'type' => 'string', 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+				'option_name'    => array( 'type' => 'string', 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+				'pattern'        => array( 'type' => 'string', 'required' => true, 'sanitize_callback' => array( 'UWNext_REST', 'sanitize_file_content' ) ),
+				'case_sensitive' => array( 'type' => 'boolean', 'required' => false ),
+				'max_results'    => array( 'type' => 'integer', 'required' => false ),
+			),
+		) );
+
+		// --- Draft theme lifecycle ---
+
+		uwnext_register_internal_route( $namespace, '/classic-theme-safety', array(
+			'methods' => 'GET',
+			'callback' => array( $this, 'classic_theme_safety' ),
+			'permission_callback' => array( $this, 'can_edit_themes' ),
+			'args' => array( 'challenge' => array( 'type' => 'string', 'required' => true, 'pattern' => '^[a-f0-9]{32}$' ) ),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/draft-theme/compile-sources', array(
+			'methods'             => 'GET',
+			'callback'            => array( $this, 'get_compile_sources' ),
+			'permission_callback' => array( $this, 'can_read_themes' ),
+			'args'                => array(),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/draft-theme', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'create_draft_theme' ),
+			'permission_callback' => array( $this, 'can_edit_themes' ),
+			'args'                => array(),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/draft-theme/publish', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'publish_draft_theme' ),
+			'permission_callback' => array( $this, 'can_publish_theme' ),
+			'args'                => array(
+				'expected_source_hash' => array( 'type' => 'string', 'pattern' => '^[a-f0-9]{64}$' ),
+				'saved_customizations' => array( 'type' => 'string', 'enum' => array( 'set_aside', 'keep' ) ),
+			),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/draft-theme/preview', array(
+			'methods'             => 'GET',
+			'callback'            => array( $this, 'get_preview_url' ),
+			'permission_callback' => array( $this, 'can_read_themes' ),
+			'args'                => array(),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/draft-theme', array(
+			'methods'             => 'DELETE',
+			'callback'            => array( $this, 'delete_draft_theme' ),
+			'permission_callback' => array( $this, 'can_edit_themes' ),
+			'args'                => array(),
+		) );
+
+		// POST alias: many hardened hosts block the DELETE method at the server.
+		uwnext_register_internal_route( $namespace, '/draft-theme/delete', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'delete_draft_theme' ),
+			'permission_callback' => array( $this, 'can_edit_themes' ),
+			'args'                => array(),
+		) );
+
+		// --- WP-CLI ---
+
+		uwnext_register_internal_route( $namespace, '/cli/run', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'run_cli' ),
+			'permission_callback' => array( $this, 'can_run_cli' ),
+			'args'                => array(
+				'command' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => array( $this, 'sanitize_cli_command' ),
+				),
+				'confirm_write' => array(
+					'type'    => 'boolean',
+					'default' => false,
+				),
+			),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/audit-log', array(
+			'methods'             => 'GET',
+			'callback'            => array( $this, 'audit_log_list' ),
+			'permission_callback' => array( $this, 'can_manage_options' ),
+			'args'                => array(
+				'limit'  => array( 'type' => 'integer', 'default' => 50 ),
+				'offset' => array( 'type' => 'integer', 'default' => 0 ),
+			),
+		) );
+
+		// Append-only audit log writer. Called by the Worker after browser
+		// approval executes a destructive REST op (CLI path writes via the
+		// PHP audit-log class directly). Trust comes from App Password auth —
+		// the AI's MCP tool surface doesn't expose this path.
+		uwnext_register_internal_route( $namespace, '/audit-log/record', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'audit_log_record' ),
+			'permission_callback' => array( $this, 'can_manage_options' ),
+			'args'                => array(
+				'operation'      => array( 'type' => 'string', 'required' => true, 'sanitize_callback' => 'sanitize_text_field' ),
+				'command'        => array( 'type' => 'string', 'required' => true ),
+				'params'         => array( 'type' => 'string', 'required' => false ),
+				'dry_run'        => array( 'type' => 'string', 'required' => false ),
+				'result_summary' => array( 'type' => 'string', 'required' => false ),
+			),
+		) );
+
+		// Execution-receipt lookup for Worker reconciliation. Always 200 —
+		// a bare 404 is indistinguishable from a rolled-back plugin, which the
+		// Worker must treat as UNKNOWN rather than "never executed".
+		uwnext_register_internal_route( $namespace, '/op-receipt/(?P<op_id>[a-z0-9_.:]+)', array(
+			'methods'             => 'GET',
+			'callback'            => array( $this, 'op_receipt_get' ),
+			'permission_callback' => array( $this, 'can_manage_options' ),
+			'args'                => array(
+				'op_id' => array( 'type' => 'string', 'required' => true ),
+			),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/cli/run-approved', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'run_cli_approved' ),
+			'permission_callback' => array( $this, 'can_run_cli_approved' ),
+			'args'                => array(
+				'command' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => array( $this, 'sanitize_cli_command' ),
+				),
+				'confirm_write' => array(
+					'type'    => 'boolean',
+					'default' => false,
+				),
+				// JSON {operation, dry_run} snapshot of what the human approved;
+				// compared against a fresh classification before execution.
+				'approved_state' => array(
+					'type'     => 'string',
+					'required' => false,
+				),
+				// Worker-controlled: run a detachable command out of band and
+				// answer 202; the outcome lands in the op receipt.
+				'detach' => array(
+					'type'    => 'boolean',
+					'default' => false,
+				),
+			),
+		) );
+
+		// --- Code snippet (WPCode bridge) ---
+
+		// Called by the Worker only after browser-side approval of the exact
+		// code + type + location. `code` carries exact bytes — no sanitizer;
+		// the Worker asserts stored bytes equal approved bytes. There is
+		// deliberately no `active` arg: activation is human-only, in wp-admin.
+		// The authorize screen's Approve button mints through this route instead
+		// of /wp/v2/users/me/application-passwords, which host firewalls block
+		// as user enumeration (#58). Cookie + nonce session only.
+		uwnext_register_internal_route( $namespace, '/authorize', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'mint_app_password' ),
+			'permission_callback' => array( $this, 'can_mint_app_password' ),
+			'args'                => array(
+				'name'   => array( 'type' => 'string', 'required' => true, 'sanitize_callback' => 'sanitize_text_field' ),
+				'app_id' => array( 'type' => 'string', 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
+			),
+		) );
+		uwnext_register_internal_route( $namespace, '/authorize/preflight', array(
+			'methods' => 'GET',
+			'callback' => array( $this, 'authorize_preflight' ),
+			'permission_callback' => array( $this, 'can_authorize_session' ),
+		) );
+		uwnext_register_internal_route( $namespace, '/connection-status', array(
+			'methods' => 'POST',
+			'callback' => array( 'UWNext_Connection_Status', 'record' ),
+			'permission_callback' => array( 'UWNext_Connection_Status', 'authorize' ),
+		) );
+		uwnext_register_internal_route( $namespace, '/op-proof/check', array(
+			'methods' => 'POST',
+			'permission_callback' => array( $this, 'can_check_op_proof' ),
+			'callback' => function ( $request ) { return rest_ensure_response( array( 'verified' => true, 'protocol' => 2, 'challenge' => $request->get_param( 'challenge' ) ) ); },
+			'args' => array( 'challenge' => array( 'type' => 'string', 'required' => true, 'maxLength' => 80 ) ),
+		) );
+
+		$snippet_args = array(
+			'action' => array(
+				'type'              => 'string',
+				'default'           => 'create',
+				'sanitize_callback' => 'sanitize_key',
+			),
+			'id' => array(
+				'type'              => 'integer',
+				'required'          => false,
+				'sanitize_callback' => 'absint',
+			),
+			// Required for create and update only; snippet_data() refuses a missing one.
+			'code' => array(
+				'type'     => 'string',
+				'required' => false,
+			),
+			'title' => array(
+				'type'              => 'string',
+				'required'          => false,
+				'sanitize_callback' => 'sanitize_text_field',
+			),
+			'code_type' => array(
+				'type'              => 'string',
+				'required'          => false,
+				'sanitize_callback' => 'sanitize_key',
+			),
+			'location' => array(
+				'type'              => 'string',
+				'required'          => false,
+				'sanitize_callback' => 'sanitize_key',
+			),
+			'insert_method' => array(
+				'type'              => 'string',
+				'default'           => 'auto',
+				'sanitize_callback' => 'sanitize_key',
+			),
+		);
+		uwnext_register_internal_route( $namespace, '/code-snippet', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'code_snippet' ),
+			'permission_callback' => array( $this, 'can_edit_code_snippets_approved' ),
+			'args'                => $snippet_args,
+		) );
+		uwnext_register_internal_route( $namespace, '/code-snippet/dormant', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'code_snippet_dormant' ),
+			'permission_callback' => array( $this, 'can_edit_code_snippets_dormant' ),
+			'args'                => $snippet_args,
+		) );
+
+		uwnext_register_internal_route( $namespace, '/cli/status', array(
+			'methods'             => 'GET',
+			'callback'            => array( $this, 'cli_status' ),
+			'permission_callback' => array( $this, 'can_manage_themes' ),
+			'args'                => array(),
+		) );
+
+		// --- SeedProd builder login (compile automation) ---
+
+		// Hidden from the index: agents otherwise call it on sites without SeedProd.
+		uwnext_register_internal_route( $namespace, '/builder-login', array(
+			'methods'             => 'POST',
+			'callback'            => array( UWNext_Builder_Login::instance(), 'mint' ),
+			'permission_callback' => array( $this, 'can_builder_login' ),
+			'show_in_index'       => false,
+			'args'                => array(
+				'page_id' => array(
+					'type'              => 'integer',
+					'required'          => true,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		) );
+
+		// --- Rendered HTML ---
+
+		uwnext_register_internal_route( $namespace, '/rendered-html', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'get_rendered_html' ),
+			'permission_callback' => array( $this, 'can_manage_themes' ),
+			'args'                => array(
+				'path' => array(
+					'type'              => 'string',
+					'required'          => false,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+			),
+		) );
+
+		// --- Classic Theme Creation ---
+
+		uwnext_register_internal_route( $namespace, '/create-classic-theme', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'create_classic_theme' ),
+			'permission_callback' => array( $this, 'can_edit_themes' ),
+			'args'                => array(
+				'theme_name' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'description' => array(
+					'type'              => 'string',
+					'required'          => false,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+			),
+		) );
+
+		// Only fixed plugins register this route; the Worker never sends creation to the legacy route.
+		uwnext_register_internal_route( $namespace, '/create-classic-theme-safe', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'create_classic_theme' ),
+			'permission_callback' => array( $this, 'can_edit_themes' ),
+			'args'                => array(
+				'theme_name' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'description' => array(
+					'type'              => 'string',
+					'required'          => false,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+			),
+		) );
+
+		// --- Media Upload ---
+
+		uwnext_register_internal_route( $namespace, '/upload-media', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'upload_media' ),
+			'permission_callback' => function () {
+				return current_user_can( 'upload_files' ) ? true : $this->missing_capability_error( 'upload_files' );
+			},
+			'args'                => array(
+				'url' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => 'esc_url_raw',
+				),
+				'title' => array(
+					'type'              => 'string',
+					'required'          => false,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'alt_text' => array(
+					'type'              => 'string',
+					'required'          => false,
+					'sanitize_callback' => 'sanitize_text_field',
+				),
+				'post_id' => array(
+					'type'              => 'integer',
+					'required'          => false,
+					'sanitize_callback' => 'absint',
+				),
+			),
+		) );
+
+		// --- Live Reload ---
+
+		uwnext_register_internal_route( $namespace, '/last-change', array(
+			'methods'             => 'GET',
+			'callback'            => array( $this, 'get_last_change' ),
+			'permission_callback' => array( $this, 'can_edit_posts' ),
+			'args'                => array(
+				'since' => array(
+					'type'    => 'number',
+					'default' => 0,
+				),
+			),
+		) );
+
+		uwnext_register_internal_route( $namespace, '/navigate', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'navigate' ),
+			'permission_callback' => array( $this, 'can_manage_themes' ),
+			'args'                => array(
+				'url' => array(
+					'type'              => 'string',
+					'required'          => true,
+					'sanitize_callback' => 'esc_url_raw',
+				),
+			),
+		) );
+
+		// Elementor endpoints (list_widgets, get_schema, save_page, save_template)
+		// live in class-uwnext-elementor.php — registered via its own rest_api_init hook.
+	}
+
+	// ------------------------------------------------------------------
+	// Permission Callbacks — mapped to WordPress capabilities
+	// ------------------------------------------------------------------
+
+	/**
+	 * Build a WP_Error naming the missing capability, instead of returning a
+	 * bare `false` (WordPress's generic "Sorry, you are not allowed to do
+	 * that" 403/401 tells the AI nothing it can act on).
+	 */
+	private function missing_capability_error( $capability, $post_id = 0 ) {
+		$data      = array( 'status' => rest_authorization_required_code(), 'capability' => $capability );
+		$post_type = $post_id > 0 ? get_post_type( $post_id ) : '';
+		if ( $post_type ) {
+			// Admins pass can_edit_content's manage_options fallback, so only
+			// sub-admin accounts can reach this error and the reconnect advice
+			// is accurate for them.
+			$data['post_type'] = $post_type;
+			return new WP_Error(
+				'uwnext_missing_capability',
+				sprintf(
+					/* translators: 1: WordPress capability name, 2: post ID, 3: post type slug */
+					__( 'The connected account failed the "%1$s" check for post #%2$d (post type "%3$s"). Post types can carry custom capabilities, so accounts below Administrator may be blocked here even when they can edit regular posts. Reconnect with an Administrator account for access.', 'unlimited-wp-mcp-next' ),
+					$capability,
+					$post_id,
+					$post_type
+				),
+				UWNext_Error_Contract::data( 'capability_cpt_mapping', false, $data )
+			);
+		}
+		$data['user_is_admin'] = current_user_can( 'manage_options' );
+		$data['is_multisite'] = is_multisite();
+
+		// edit_themes/edit_plugins are withheld from site admins on multisite and
+		// commonly stripped by security plugins, so the reconnect advice that is
+		// right for every other capability sends those users in circles.
+		if ( in_array( $capability, array( 'edit_themes', 'edit_plugins' ), true ) && ( $data['is_multisite'] || $data['user_is_admin'] ) ) {
+			$message = $data['is_multisite']
+				/* translators: %s: WordPress capability name */
+				? sprintf( __( 'This action requires the WordPress capability "%s". On a multisite network only NETWORK super admins have it; site Administrators never do. Reconnecting with another site admin cannot help.', 'unlimited-wp-mcp-next' ), $capability )
+				/* translators: %s: WordPress capability name */
+				: sprintf( __( 'This action requires the WordPress capability "%s". The connected account is an Administrator and still lacks it, which means a security plugin removed it; reconnecting cannot help. That is the site owner\'s security setting: tell the user a security plugin has turned off file editing and ask whether they want it turned back on. Do not change the setting yourself, because re-enabling file editing lowers the site\'s hardening.', 'unlimited-wp-mcp-next' ), $capability );
+			return new WP_Error( 'uwnext_missing_capability', $message, UWNext_Error_Contract::data( 'capability_role', false, $data ) );
+		}
+
+		return new WP_Error(
+			'uwnext_missing_capability',
+			sprintf(
+				/* translators: %s: WordPress capability name, e.g. edit_theme_options */
+				__( 'This action requires the WordPress capability "%s", which the connected account does not have. Administrators have it by default — reconnect with an account that has this capability for full access.', 'unlimited-wp-mcp-next' ),
+				$capability
+			),
+			UWNext_Error_Contract::data( 'capability_role', false, $data )
+		);
+	}
+
+	/**
+	 * Site info and theme management — edit_theme_options.
+	 * Matches WP core /wp/v2/themes permission model.
+	 */
+	public function can_manage_themes() {
+		return current_user_can( 'edit_theme_options' ) ? true : $this->missing_capability_error( 'edit_theme_options' );
+	}
+
+	/**
+	 * Cleanup endpoint + audit log read — manage_options capability.
+	 * Same gate as wp-cli option/transient operations.
+	 */
+	public function can_manage_options() {
+		return current_user_can( 'manage_options' ) ? true : $this->missing_capability_error( 'manage_options' );
+	}
+
+	/**
+	 * Live reload notifications — edit_posts capability.
+	 * Covers Admins, Editors, Authors, and Contributors.
+	 */
+	public function can_edit_posts() {
+		return current_user_can( 'edit_posts' ) ? true : $this->missing_capability_error( 'edit_posts' );
+	}
+
+	/**
+	 * The file-editor lock constants remove edit_themes from every role via
+	 * map_meta_cap, so a gate that checks the capability alone misreports a
+	 * locked site as a stripped capability ("a security plugin removed it").
+	 *
+	 * @return WP_Error|null Null when neither constant locks file editing.
+	 */
+	private function file_lock_error() {
+		if ( defined( 'DISALLOW_FILE_EDIT' ) && DISALLOW_FILE_EDIT ) {
+			return new WP_Error(
+				'file_edit_disabled',
+				__( 'File editing is disabled on this site (DISALLOW_FILE_EDIT is set).', 'unlimited-wp-mcp-next' ),
+				UWNext_Error_Contract::data( 'host_environment', false, array( 'status' => 403 ) )
+			);
+		}
+
+		if ( defined( 'DISALLOW_FILE_MODS' ) && DISALLOW_FILE_MODS ) {
+			return new WP_Error(
+				'file_mods_disabled',
+				__( 'File modifications are disabled on this site (DISALLOW_FILE_MODS is set).', 'unlimited-wp-mcp-next' ),
+				UWNext_Error_Contract::data( 'host_environment', false, array( 'status' => 403 ) )
+			);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Read theme files.
+	 *
+	 * edit_themes normally, as the Theme File Editor requires. The file-editor
+	 * lock constants strip that capability from every role, but they disable a
+	 * write surface: reading theme files is what the same admins do over SFTP,
+	 * so a locked site admits reads on edit_theme_options instead. Writes and
+	 * draft creation stay behind can_edit_themes and the constants.
+	 */
+	public function can_read_themes() {
+		if ( current_user_can( 'edit_themes' ) ) {
+			return true;
+		}
+		// Core keeps edit_themes for super admins on multisite; a subsite admin never had theme source and the lock must not grant it.
+		if ( $this->file_lock_error() && ( ! is_multisite() || is_super_admin() ) ) {
+			return current_user_can( 'edit_theme_options' ) ? true : $this->missing_capability_error( 'edit_theme_options' );
+		}
+		return $this->missing_capability_error( 'edit_themes' );
+	}
+
+	public function can_read_files( $request ) {
+		$scope = $request->get_param( 'scope' );
+		if ( 'wp-content' === $scope ) {
+			if ( is_multisite() && ! is_super_admin() ) {
+				return $this->missing_capability_error( 'manage_network_options' );
+			}
+			return $this->can_manage_options();
+		}
+		$check = $this->require_theme_scope( $request );
+		return is_wp_error( $check ) ? $check : $this->can_read_themes();
+	}
+
+	private function require_theme_scope( $request ) {
+		$scope = $request->get_param( 'scope' );
+		if ( null !== $scope && 'theme' !== $scope ) {
+			return new WP_Error( 'read_only_scope', 'The wp-content scope supports only read_file and list_files. Theme writes remain confined to the draft theme.', UWNext_Error_Contract::data( 'security_gate', false, array( 'status' => 403 ) ) );
+		}
+		return true;
+	}
+
+	/**
+	 * Write/edit/delete theme files — edit_themes + respects DISALLOW_FILE_EDIT.
+	 * WordPress uses this constant to lock down the Theme/Plugin File Editor.
+	 * Managed hosts often set this. We must respect it.
+	 */
+	public function can_edit_themes() {
+		$locked = $this->file_lock_error();
+		if ( $locked ) {
+			return $locked;
+		}
+		return current_user_can( 'edit_themes' ) ? true : $this->missing_capability_error( 'edit_themes' );
+	}
+
+	/**
+	 * Publish draft theme — requires both edit_themes and switch_themes.
+	 * Publishing replaces the live theme files and re-activates the theme.
+	 */
+	public function can_publish_theme() {
+		$can_edit = $this->can_edit_themes();
+		if ( is_wp_error( $can_edit ) ) {
+			return $can_edit;
+		}
+
+		return current_user_can( 'switch_themes' ) ? true : $this->missing_capability_error( 'switch_themes' );
+	}
+
+	/**
+	 * Sanitize a CLI command string without HTML-encoding angle brackets.
+	 *
+	 * sanitize_text_field() converts < to &lt; which injects a semicolon
+	 * that trips the shell-char blocklist in UWNext_CLI::run().
+	 */
+	public function sanitize_cli_command( $value ) {
+		// No tag stripping: it silently corrupted values ("<b>x</b>" stored as "x",
+		// script blocks vanished with their contents). The executor's SHELL_CHARS
+		// check rejects < and > loudly instead, and every surface that echoes a
+		// command escapes it.
+		$value = wp_check_invalid_utf8( $value );
+		$value = preg_replace( '/[\r\n\t ]+/', ' ', $value );
+		return trim( $value );
+	}
+
+	/**
+	 * Code snippet writes — WPCode's own snippet capability. The route is
+	 * registered even without WPCode so the failure reads as a clear
+	 * wpcode_missing instead of a confusing rest_no_route; nothing can be
+	 * written (let alone execute) until the human installs WPCode.
+	 */
+	public function can_edit_code_snippets() {
+		if ( ! class_exists( 'WPCode_Snippet' ) ) {
+			return new WP_Error(
+				'wpcode_missing',
+				__( 'The WPCode plugin is required for code snippets and is not installed or not active on this site.', 'unlimited-wp-mcp-next' ),
+				UWNext_Error_Contract::data( 'not_supported', false, array( 'status' => 501 ) )
+			);
+		}
+		return current_user_can( 'wpcode_edit_snippets' ) ? true : $this->missing_capability_error( 'wpcode_edit_snippets' );
+	}
+
+	/**
+	 * Builder login mint — the capability SeedProd itself gates the builder
+	 * screen on, so the minted session can never reach further than the
+	 * connected account already could.
+	 */
+	public function can_builder_login() {
+		$capability = UWNext_Builder_Login::required_capability();
+		return current_user_can( $capability ) ? true : $this->missing_capability_error( $capability );
+	}
+
+	/**
+	 * WP-CLI — baseline manage_options check.
+	 * Per-command capability checks happen in the handler.
+	 */
+	public function can_run_cli() {
+		return current_user_can( 'manage_options' ) ? true : $this->missing_capability_error( 'manage_options' );
+	}
+
+	/**
+	 * The current cookie session only: never an application password or Basic
+	 * auth (this must not become a firewall-bypass password factory for callers
+	 * that already hold one), and only for a user who may create their own.
+	 */
+	public function can_authorize_session( $request ) {
+		$uid = get_current_user_id();
+		if ( $uid <= 0 ) {
+			return new WP_Error( 'uwnext_authorize_login_required', __( 'Log in to WordPress in this browser to approve the connection.', 'unlimited-wp-mcp-next' ), array( 'status' => 401 ) );
+		}
+		$auth_header = is_object( $request ) && method_exists( $request, 'get_header' ) ? (string) $request->get_header( 'authorization' ) : '';
+		if ( '' !== $auth_header || ! empty( $_SERVER['PHP_AUTH_USER'] ) || ! empty( $_SERVER['HTTP_X_UWNext_AUTHORIZATION'] ) || $request->get_header( 'x_uwnext_authorization' ) || ( function_exists( 'rest_get_authenticated_app_password' ) && null !== rest_get_authenticated_app_password() ) ) {
+			return new WP_Error( 'uwnext_authorize_session_only', __( 'This route accepts the logged-in browser session only.', 'unlimited-wp-mcp-next' ), array( 'status' => 403 ) );
+		}
+		$nonce = $request->get_header( 'x_wp_nonce' );
+		if ( ! $nonce ) {
+			$nonce = $request->get_param( '_wpnonce' );
+		}
+		if ( ! is_string( $nonce ) || ! wp_verify_nonce( $nonce, 'wp_rest' ) ) {
+			return new WP_Error( 'uwnext_authorize_nonce', __( 'Refresh this browser page and approve the connection again.', 'unlimited-wp-mcp-next' ), array( 'status' => 403 ) );
+		}
+		return true;
+	}
+
+	public function authorize_preflight( $request ) {
+		$can_create = current_user_can( 'create_app_password', get_current_user_id() );
+		$available = UWNext_App_Password_Policy::available_for_uwnext( get_current_user_id() );
+		return rest_ensure_response( array( 'available_for_user' => $available, 'can_create' => $can_create, 'is_ssl' => is_ssl(), 'reason' => ! $can_create ? 'cannot_create' : ( ! $available ? 'unavailable_for_user' : 'ok' ) ) );
+	}
+
+	public function can_mint_app_password( $request ) {
+		$session = $this->can_authorize_session( $request );
+		if ( true !== $session ) {
+			return $session;
+		}
+		$uid = get_current_user_id();
+		if ( ! current_user_can( 'create_app_password', $uid ) ) {
+			return new WP_Error( 'uwnext_authorize_forbidden', __( 'This account cannot create application passwords.', 'unlimited-wp-mcp-next' ), array( 'status' => 403 ) );
+		}
+		if ( ! UWNext_App_Password_Policy::available_for_uwnext( $uid ) ) {
+			return new WP_Error( 'uwnext_authorize_unavailable', __( 'Application passwords are not available for this account on this site.', 'unlimited-wp-mcp-next' ), array( 'status' => 501 ) );
+		}
+		return true;
+	}
+
+	/** Same core call the wp/v2 route makes; the response shape core's auth-app.js reads. */
+	public function mint_app_password( $request ) {
+		$uid  = get_current_user_id();
+		$args = array( 'name' => (string) $request->get_param( 'name' ) );
+		$app  = (string) $request->get_param( 'app_id' );
+		if ( '' !== $app ) {
+			$args['app_id'] = $app;
+		}
+		$created = WP_Application_Passwords::create_new_application_password( $uid, $args );
+		if ( is_wp_error( $created ) ) {
+			return $created;
+		}
+		// Approval signatures no longer have per-site keys to reset on authorization.
+		list( $password, $item ) = $created;
+		update_option( 'uwnext_authorization_pending_at', time(), false );
+		return rest_ensure_response( array(
+			'password' => $password,
+			'uuid'     => isset( $item['uuid'] ) ? $item['uuid'] : '',
+			'name'     => isset( $item['name'] ) ? $item['name'] : $args['name'],
+		) );
+	}
+
+	/** run-approved: capability, then the Worker's per-op proof once a key exists. */
+	public function can_run_cli_approved( $request ) {
+		$ok = $this->can_run_cli();
+		if ( true !== $ok ) {
+			return $ok;
+		}
+		return UWNext_Op_Proof::verify( $request, '/unlimited-wp-mcp-next/v1/cli/run-approved', (string) $request->get_param( 'command' ) );
+	}
+
+	public function can_edit_code_snippets_approved( $request ) {
+		$ok = $this->can_edit_code_snippets();
+		if ( true !== $ok ) {
+			return $ok;
+		}
+		return UWNext_Op_Proof::verify( $request, '/unlimited-wp-mcp-next/v1/code-snippet', UWNext_Code_Snippet::proof_subject( $request ) );
+	}
+
+	/** No approval, but still only the Worker: the proof is signed for this route alone. */
+	public function can_edit_code_snippets_dormant( $request ) {
+		$ok = $this->can_edit_code_snippets();
+		if ( true !== $ok ) {
+			return $ok;
+		}
+		return UWNext_Op_Proof::verify( $request, '/unlimited-wp-mcp-next/v1/code-snippet/dormant', UWNext_Code_Snippet::proof_subject( $request ) );
+	}
+
+	public function can_check_op_proof( $request ) {
+		$allowed = $this->can_manage_options();
+		return true === $allowed ? UWNext_Op_Proof::verify( $request, '/unlimited-wp-mcp-next/v1/op-proof/check', (string) $request->get_param( 'challenge' ) ) : $allowed;
+	}
+
+	public function can_edit_content( $request ) {
+		$type = $request->get_param( 'target_type' );
+		if ( 'option' === $type ) {
+			return current_user_can( 'manage_options' ) ? true : $this->missing_capability_error( 'manage_options' );
+		}
+		$post_id = (int) $request->get_param( 'post_id' );
+		if ( $post_id > 0 ) {
+			// manage_options fallback: CPT capability mappings (WPForms, LMS
+			// plugins) fail edit_post even for admins. Post types with an
+			// explicit do_not_allow edit cap stay fenced for everyone.
+			if ( current_user_can( 'edit_post', $post_id ) || $this->admin_content_override( $post_id ) ) {
+				return true;
+			}
+			return $this->missing_capability_error( 'edit_post', $post_id );
+		}
+		return current_user_can( 'edit_posts' ) ? true : $this->missing_capability_error( 'edit_posts' );
+	}
+
+	private function admin_content_override( $post_id ) {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return false;
+		}
+		$pt_obj = get_post_type_object( get_post_type( $post_id ) );
+		return $pt_obj && 'do_not_allow' !== $pt_obj->cap->edit_posts;
+	}
+
+	// ------------------------------------------------------------------
+	// Site Info
+	// ------------------------------------------------------------------
+
+	/**
+	 * Return the REST-registered meta keys for a post type, with each key's
+	 * REST schema and sanitize/auth callback presence. Diagnoses the
+	 * common "POST /wp/v2/<cpt>/<id> with meta silently drops meta" bug
+	 * by surfacing which keys are actually visible to the REST controller.
+	 */
+	public function get_registered_meta( $request ) {
+		$post_type = $request->get_param( 'post_type' );
+
+		if ( ! post_type_exists( $post_type ) ) {
+			return new WP_Error(
+				'unknown_post_type',
+				/* translators: %s: post type slug */
+				sprintf( __( 'Post type \'%s\' is not registered. Confirm register_post_type() ran and rest_api_init has fired.', 'unlimited-wp-mcp-next' ), $post_type ),
+				UWNext_Error_Contract::data( 'not_found', false, array( 'status' => 404 ) )
+			);
+		}
+
+		$pt_object       = get_post_type_object( $post_type );
+		$pt_show_in_rest = $pt_object && ! empty( $pt_object->show_in_rest );
+		$supports_cf     = post_type_supports( $post_type, 'custom-fields' );
+
+		$registered = function_exists( 'get_registered_meta_keys' )
+			? get_registered_meta_keys( 'post', $post_type )
+			: array();
+
+		$result = array();
+		foreach ( $registered as $key => $args ) {
+			$result[ $key ] = array(
+				'type'         => isset( $args['type'] ) ? $args['type'] : 'string',
+				'single'       => ! empty( $args['single'] ),
+				'show_in_rest' => ! empty( $args['show_in_rest'] ),
+				'has_default'  => isset( $args['default'] ),
+				'has_sanitize' => ! empty( $args['sanitize_callback'] ),
+				'has_auth'     => ! empty( $args['auth_callback'] ),
+			);
+		}
+
+		// Both flags must be true for REST writes to /wp/v2/<cpt>/<id> with
+		// meta in the body to actually persist. show_in_rest on the CPT
+		// gates REST routing; custom-fields support gates meta exposure.
+		$rest_meta_writable = $pt_show_in_rest && $supports_cf;
+
+		return rest_ensure_response( array(
+			'post_type'                   => $post_type,
+			'post_type_show_in_rest'      => $pt_show_in_rest,
+			'post_type_supports_meta'     => $supports_cf,
+			'rest_meta_writable'          => $rest_meta_writable,
+			'registered_meta_count'       => count( $result ),
+			'registered_meta'             => $result,
+			'gotcha_note'                 => $rest_meta_writable
+				? null
+				: 'REST meta writes will silently drop unregistered keys. To fix: either call uwnext_field_register() (auto-adds custom-fields support) or add `add_post_type_support( \'' . $post_type . '\', \'custom-fields\' )` in your theme.',
+		) );
+	}
+
+	/**
+	 * Capability flags the MCP keys off to decide whether a route is available
+	 * before steering the AI to it. Prefer adding a flag here over forcing the
+	 * MCP to compare UWNext_VERSION strings — flags are forward-compatible.
+	 */
+	public static function feature_flags() {
+		return array( 'content_edit', 'content_search', 'code_snippet', 'code_snippet_dormant', 'beaver_save', 'breakdance_save', 'bricks_save', 'local_auth', 'local_approvals', 'local_receipts', 'svg_sanitize' );
+	}
+
+	public function get_site_info() {
+		$theme     = wp_get_theme();
+		$theme_dir = $theme->get_stylesheet_directory();
+
+		// Standard WordPress template files we surface in the inventory. Allowlist
+		// keeps the response stable regardless of what else is in the theme dir.
+		$known_templates = array(
+			'index.php', 'header.php', 'footer.php', 'functions.php', 'style.css',
+			'front-page.php', 'home.php', 'single.php', 'page.php',
+			'archive.php', '404.php', 'search.php', 'comments.php',
+		);
+		// The "minimal complete WP theme" floor — what every content-bearing site needs.
+		$floor_templates = array( 'single.php', 'page.php', 'archive.php', '404.php', 'search.php' );
+
+		$templates_present = array();
+		foreach ( $known_templates as $tpl ) {
+			if ( file_exists( $theme_dir . '/' . $tpl ) ) {
+				$templates_present[] = $tpl;
+			}
+		}
+		$templates_missing = array_values( array_diff( $floor_templates, $templates_present ) );
+
+		// Check WP-CLI availability.
+		$cli = new UWNext_CLI();
+		$cli_status = $cli->check_availability();
+
+		// REST requests do not load the admin plugin helpers; without this get_plugins() is undefined and the route fatals.
+		if ( ! function_exists( 'get_plugins' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
+		// Connect-time capability preflight: the MCP reads this right after
+		// OAuth to warn about limited accounts, and error recovery hints tell
+		// the AI to check it before suggesting a reconnect.
+		$user = wp_get_current_user();
+
+		return rest_ensure_response( array(
+			'connected_user' => array(
+				'login' => $user->user_login,
+				'roles' => array_values( $user->roles ),
+				'caps'  => array(
+					'manage_options'     => current_user_can( 'manage_options' ),
+					'edit_theme_options' => current_user_can( 'edit_theme_options' ),
+					'edit_posts'         => current_user_can( 'edit_posts' ),
+					'publish_posts'      => current_user_can( 'publish_posts' ),
+					'upload_files'       => current_user_can( 'upload_files' ),
+					'activate_plugins'   => current_user_can( 'activate_plugins' ),
+				),
+			),
+			'site_name'    => get_bloginfo( 'name' ),
+			'site_url'     => site_url(),
+			'wp_version'   => get_bloginfo( 'version' ),
+			'php_version'  => phpversion(),
+			'uwnext_plugin_version' => defined( 'UWNext_VERSION' ) ? UWNext_VERSION : '',
+			'features'     => self::feature_flags(),
+			'active_theme' => array(
+				'name'              => $theme->get( 'Name' ),
+				'stylesheet'        => get_stylesheet(),
+				'template'          => get_template(),
+				'version'           => $theme->get( 'Version' ),
+				'uwnext_authored'   => 'yes' === strtolower( trim( (string) $theme->get( 'UWNext' ) ) ),
+				'uses_tailwind'     => file_exists( $theme_dir . '/theme.css' ),
+				'templates_present' => $templates_present,
+				'templates_missing' => $templates_missing,
+			),
+			'plugins'        => array_keys( get_plugins() ),
+			'themes'         => array_keys( wp_get_themes() ),
+			'wp_cli_available' => $cli_status['available'],
+			'wp_cli_version'   => $cli_status['version'] ?? null,
+		) );
+	}
+
+	// ------------------------------------------------------------------
+	// Content Operations (delegated to UWNext_Content_Ops)
+	// ------------------------------------------------------------------
+
+	/** Build the {type, args} pair the content ops expect from request params. */
+	private function content_target( $request ) {
+		$type = $request->get_param( 'target_type' );
+		switch ( $type ) {
+			case 'post':
+				return array( $type, array( 'post_id' => (int) $request->get_param( 'post_id' ), 'field' => $request->get_param( 'field' ) ) );
+			case 'meta':
+				return array( $type, array( 'post_id' => (int) $request->get_param( 'post_id' ), 'key' => $request->get_param( 'meta_key' ) ) );
+			case 'option':
+				return array( $type, array( 'name' => $request->get_param( 'option_name' ) ) );
+			default:
+				return array( $type, array() );
+		}
+	}
+
+	public function edit_content( $request ) {
+		list( $type, $args ) = $this->content_target( $request );
+		add_filter( 'wp_php_error_message', array( __CLASS__, 'edit_fatal_message' ), 10, 2 );
+		try {
+			$content_ops = new UWNext_Content_Ops();
+			return $content_ops->edit(
+				$type,
+				$args,
+				$request->get_param( 'old_content' ),
+				$request->get_param( 'new_content' ),
+				(bool) $request->get_param( 'replace_all' ),
+				(bool) $request->get_param( 'whole_word' )
+			);
+		} catch ( \Throwable $e ) {
+			$where = UWNext_Error_Contract::php_error_location( $e->getMessage(), $e->getFile(), $e->getLine(), $e->getTrace() );
+			return new WP_Error( 'content_edit_fatal', sprintf(
+				/* translators: 1: error detail or a generic note 2: recovery advice */
+				__( 'The edit stopped with a PHP error in the site\'s code: %1$s. %2$s', 'unlimited-wp-mcp-next' ),
+				'' !== $where ? $where : __( 'details are shown to administrators only', 'unlimited-wp-mcp-next' ),
+				self::edit_fatal_advice()
+			), UWNext_Error_Contract::data( 'wp_core', false, array( 'status' => 500 ) ) );
+		} finally {
+			remove_filter( 'wp_php_error_message', array( __CLASS__, 'edit_fatal_message' ), 10 );
+		}
+	}
+
+	// An uncatchable fatal (memory, time limit) during content/edit: administrators get the cause in WordPress's own error body.
+	public static function edit_fatal_message( $message, $error ) {
+		return UWNext_Error_Contract::fatal_message( $message, $error, 'content/edit fatal', self::edit_fatal_advice() );
+	}
+
+	private static function edit_fatal_advice() {
+		return __( 'The change may already be stored, because WordPress writes it before most save hooks run: read the target back before doing anything else, and do not resend the same edit, because the same code fails the same way. The fix belongs in the plugin or theme that raised the error (update or deactivate it), or make this change in wp-admin. When the message names WordPress core or UWNext itself, never deactivate UWNext (it is this connection): report the message to UWNext support.', 'unlimited-wp-mcp-next' );
+	}
+
+	public function search_content( $request ) {
+		list( $type, $args ) = $this->content_target( $request );
+		$max = $request->get_param( 'max_results' );
+		$content_ops = new UWNext_Content_Ops();
+		return $content_ops->search(
+			$type,
+			$args,
+			$request->get_param( 'pattern' ),
+			(bool) $request->get_param( 'case_sensitive' ),
+			null === $max ? 50 : (int) $max
+		);
+	}
+
+	// ------------------------------------------------------------------
+	// File Operations (delegated to UWNext_File_Ops)
+	// ------------------------------------------------------------------
+
+	public function read_file( $request ) {
+		$check = $this->can_read_files( $request );
+		if ( is_wp_error( $check ) ) {
+			return $check;
+		}
+		if ( 'wp-content' === $request->get_param( 'scope' ) ) {
+			return ( new UWNext_Content_Files() )->read( $request->get_param( 'path' ), $request->get_param( 'start_line' ), $request->get_param( 'end_line' ) );
+		}
+		$path       = sanitize_text_field( $request->get_param( 'path' ) );
+		$start_line = $request->get_param( 'start_line' );
+		$end_line   = $request->get_param( 'end_line' );
+
+		$file_ops = new UWNext_File_Ops();
+		return $file_ops->read( $path, $start_line, $end_line );
+	}
+
+	public function edit_file( $request ) {
+		$check = $this->require_theme_scope( $request );
+		if ( is_wp_error( $check ) ) {
+			return $check;
+		}
+		$path        = sanitize_text_field( $request->get_param( 'path' ) );
+		$old_content = $request->get_param( 'old_content' );
+		$new_content = $request->get_param( 'new_content' );
+
+		$file_ops = new UWNext_File_Ops();
+		return $file_ops->edit( $path, $old_content, $new_content );
+	}
+
+	public function write_file( $request ) {
+		$check = $this->require_theme_scope( $request );
+		if ( is_wp_error( $check ) ) {
+			return $check;
+		}
+		return UWNext_Draft_Lock::run( function () use ( $request ) {
+			return $this->write_file_locked( $request );
+		} );
+	}
+
+	private function write_file_locked( $request ) {
+		$check = $this->require_theme_scope( $request );
+		if ( is_wp_error( $check ) ) {
+			return $check;
+		}
+		$path    = sanitize_text_field( $request->get_param( 'path' ) );
+		$content = $request->get_param( 'content' );
+
+		$file_ops = new UWNext_File_Ops();
+		$check = $file_ops->check_compile_sources( $request->get_param( 'expected_source_hash' ) );
+		if ( is_wp_error( $check ) ) {
+			return $check;
+		}
+		return $file_ops->write( $path, $content );
+	}
+
+	public function delete_file( $request ) {
+		$check = $this->require_theme_scope( $request );
+		if ( is_wp_error( $check ) ) {
+			return $check;
+		}
+		$path = sanitize_text_field( $request->get_param( 'path' ) );
+
+		$file_ops = new UWNext_File_Ops();
+		return $file_ops->delete( $path );
+	}
+
+	public function list_files( $request ) {
+		$check = $this->can_read_files( $request );
+		if ( is_wp_error( $check ) ) {
+			return $check;
+		}
+		if ( 'wp-content' === $request->get_param( 'scope' ) ) {
+			return ( new UWNext_Content_Files() )->list_files( $request->get_param( 'pattern' ), $request->get_param( 'directory' ) ?? '' );
+		}
+		$pattern = $request->get_param( 'pattern' );
+
+		$file_ops = new UWNext_File_Ops();
+		return $file_ops->list_files( $pattern );
+	}
+
+	public function search_files( $request ) {
+		$check = $this->require_theme_scope( $request );
+		if ( is_wp_error( $check ) ) {
+			return $check;
+		}
+		$pattern        = $request->get_param( 'pattern' );
+		$case_sensitive = (bool) $request->get_param( 'case_sensitive' );
+		$extensions     = $request->get_param( 'extensions' );
+		$max_results    = $request->get_param( 'max_results' );
+
+		$file_ops = new UWNext_File_Ops();
+		return $file_ops->search_files( $pattern, $case_sensitive, $extensions, $max_results ? (int) $max_results : 100 );
+	}
+
+	public function file_outline( $request ) {
+		$check = $this->require_theme_scope( $request );
+		if ( is_wp_error( $check ) ) {
+			return $check;
+		}
+		$path = sanitize_text_field( $request->get_param( 'path' ) );
+
+		$file_ops = new UWNext_File_Ops();
+		return $file_ops->outline( $path );
+	}
+
+	// ------------------------------------------------------------------
+	// Draft Theme (delegated to UWNext_Draft_Theme)
+	// ------------------------------------------------------------------
+
+	public function create_draft_theme() {
+		$draft = new UWNext_Draft_Theme();
+		return $draft->create();
+	}
+
+	public function get_compile_sources() {
+		$file_ops = new UWNext_File_Ops();
+		return rest_ensure_response( $file_ops->compile_sources() );
+	}
+
+	public function publish_draft_theme( $request = null ) {
+		return UWNext_Draft_Lock::run( function () use ( $request ) {
+			return $this->publish_draft_theme_locked( $request );
+		} );
+	}
+
+	private function publish_draft_theme_locked( $request = null ) {
+		$file_ops = new UWNext_File_Ops();
+		$check = $file_ops->check_compile_sources( $request ? $request->get_param( 'expected_source_hash' ) : null );
+		if ( is_wp_error( $check ) ) {
+			return $check;
+		}
+		$draft = new UWNext_Draft_Theme();
+		return $draft->publish( $request ? $request->get_param( 'saved_customizations' ) : null );
+	}
+
+	public function get_preview_url() {
+		$draft = new UWNext_Draft_Theme();
+		return $draft->preview_url();
+	}
+
+	public function delete_draft_theme() {
+		$draft = new UWNext_Draft_Theme();
+		return $draft->delete();
+	}
+
+	// ------------------------------------------------------------------
+	// WP-CLI (delegated to UWNext_CLI)
+	// ------------------------------------------------------------------
+
+	public function run_cli( $request ) {
+		$command       = $request->get_param( 'command' );
+		$confirm_write = (bool) $request->get_param( 'confirm_write' );
+
+		$cli = new UWNext_CLI();
+		return $cli->run( $command, $confirm_write );
+	}
+
+	public function code_snippet( $request ) {
+		return UWNext_Code_Snippet::handle( $request );
+	}
+
+	public function code_snippet_dormant( $request ) {
+		return UWNext_Code_Snippet::handle( $request, true );
+	}
+
+	/**
+	 * Destructive-execute endpoint. Called by the Worker AFTER the user
+	 * approves the operation in their browser. Skips the destructive
+	 * classifier; otherwise identical to run_cli. Trust comes from App
+	 * Password auth — the AI cannot reach this endpoint via the MCP tool
+	 * surface (run_wp_cli's schema does not expose this path, and the
+	 * Worker controls all plugin API calls).
+	 */
+	public function run_cli_approved( $request ) {
+		$command       = $request->get_param( 'command' );
+		$confirm_write = (bool) $request->get_param( 'confirm_write' );
+
+		if ( $request->get_param( 'detach' ) && UWNext_Detached_Ops::is_detachable( $command ) ) {
+			$op_id = UWNext_Op_Receipts::sanitize_op_id( (string) $request->get_header( 'x_uwnext_op_id' ) );
+			if ( '' === $op_id ) {
+				return new WP_Error( 'uwnext_detach_needs_op_id', __( 'Detached execution needs an operation id header; the receipt is the only channel for its result.', 'unlimited-wp-mcp-next' ), array( 'status' => 400 ) );
+			}
+			$scheduled = UWNext_Detached_Ops::instance()->schedule( $op_id, $command, $confirm_write, $request->get_param( 'approved_state' ) );
+			if ( ! is_wp_error( $scheduled ) ) {
+				return new WP_REST_Response( $scheduled, 202 );
+			}
+			if ( 'uwnext_detach_unavailable' !== $scheduled->get_error_code() ) {
+				return $scheduled;
+			}
+			// No out-of-band path on this site: run it here, as the 503 copy promises.
+		}
+
+		$cli = new UWNext_CLI();
+		return $cli->run_approved( $command, $confirm_write, $request->get_param( 'approved_state' ) );
+	}
+
+	public function cli_status() {
+		$cli = new UWNext_CLI();
+		return rest_ensure_response( $cli->check_availability() );
+	}
+
+	// ------------------------------------------------------------------
+	// Audit log
+	// ------------------------------------------------------------------
+
+	public function audit_log_list( $request ) {
+		$limit  = (int) $request->get_param( 'limit' );
+		$offset = (int) $request->get_param( 'offset' );
+		return rest_ensure_response( array(
+			'total'   => UWNext_Audit_Log::count(),
+			'entries' => UWNext_Audit_Log::get_recent( $limit, $offset ),
+		) );
+	}
+
+	public function audit_log_record( $request ) {
+		$params_json  = (string) ( $request->get_param( 'params' ) ?? '' );
+		$dry_run_json = (string) ( $request->get_param( 'dry_run' ) ?? '' );
+
+		// Params/dry_run arrive as JSON strings from the Worker; decode for
+		// the log_execution shape which expects PHP arrays.
+		$params  = '' !== $params_json ? json_decode( $params_json, true ) : null;
+		$dry_run = '' !== $dry_run_json ? json_decode( $dry_run_json, true ) : null;
+
+		UWNext_Audit_Log::log_execution( array(
+			'operation'      => (string) $request->get_param( 'operation' ),
+			'command'        => (string) $request->get_param( 'command' ),
+			'params'         => $params,
+			'dry_run'        => $dry_run,
+			'result_summary' => (string) ( $request->get_param( 'result_summary' ) ?? '' ),
+		) );
+		return rest_ensure_response( array( 'recorded' => true ) );
+	}
+
+	public function op_receipt_get( $request ) {
+		$receipt = UWNext_Op_Receipts::get_receipt( (string) $request->get_param( 'op_id' ) );
+		if ( null === $receipt ) {
+			return rest_ensure_response( array( 'found' => false ) );
+		}
+		return rest_ensure_response(
+			array_merge( array( 'found' => true ), UWNext_Op_Receipts::receipt_payload( $receipt ) )
+		);
+	}
+
+	// ------------------------------------------------------------------
+	// Rendered HTML (localhost fallback for get_page_html)
+	// ------------------------------------------------------------------
+
+	/**
+	 * Absolute URL for the front-end fetch, built from the raw home option.
+	 * home_url() runs the home_url filter, which multilingual plugins (WPML,
+	 * Polylang) use to rewrite the path into the REST request's language, so
+	 * a /de/ path could come back as the default-language page.
+	 *
+	 * @param string $path Path plus optional query string, as the Worker sent it.
+	 * @return string
+	 */
+	public static function loopback_url( $path ) {
+		$home = untrailingslashit( (string) get_option( 'home' ) );
+		if ( '' === $home ) {
+			return home_url( $path );
+		}
+		if ( is_ssl() ) {
+			$home = set_url_scheme( $home, 'https' );
+		}
+		return $home . '/' . ltrim( (string) $path, '/' );
+	}
+
+	public function get_rendered_html( $request ) {
+		$path = sanitize_text_field( $request->get_param( 'path' ) ?: '/' );
+
+		$url   = self::loopback_url( $path );
+		$token = uwnext_preview_token();
+		if ( $token ) {
+			$url = add_query_arg( 'uwnext_preview', $token, $url );
+		}
+
+		$response = wp_remote_get( $url, array(
+			'timeout'   => 15,
+			'sslverify' => true,
+		) );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$html = wp_remote_retrieve_body( $response );
+
+		return rest_ensure_response( array(
+			'html' => $html,
+			'url'  => $url,
+		) );
+	}
+
+	// ------------------------------------------------------------------
+	// Media Upload
+	// ------------------------------------------------------------------
+
+	/**
+	 * Mirror the file-type gate in core's _wp_handle_upload() before the
+	 * sideload so a denial reports as one instead of as a filesystem failure.
+	 *
+	 * @param string $tmp                   Downloaded temp file.
+	 * @param string $filename              Filename the sideload will use.
+	 * @param bool   $can_unfiltered_upload Whether the user holds unfiltered_upload.
+	 * @param string|null $detected_mime    Real mime of the downloaded bytes; null when unknown.
+	 * @return WP_Error|null
+	 */
+	public static function check_sideload_file( $tmp, $filename, $can_unfiltered_upload, $detected_mime = null ) {
+		$size = is_file( $tmp ) ? (int) filesize( $tmp ) : 0;
+		if ( $size <= 0 ) {
+			return new WP_Error(
+				'empty_file',
+				__( 'The URL returned an empty file (0 bytes), so there is nothing to add to the Media Library. Check that the URL points directly at the image file rather than an HTML page, a login redirect, or a hotlink-protected asset.', 'unlimited-wp-mcp-next' ),
+				UWNext_Error_Contract::data( 'invalid_input', false, array( 'status' => 400 ) )
+			);
+		}
+		if ( $can_unfiltered_upload ) {
+			return null;
+		}
+		$check = wp_check_filetype_and_ext( $tmp, $filename );
+		if ( empty( $check['type'] ) || empty( $check['ext'] ) ) {
+			$ext           = strtolower( (string) pathinfo( $filename, PATHINFO_EXTENSION ) );
+			$detected_mime = strtolower( trim( (string) $detected_mime ) );
+			// The filename's extension comes from the URL, not the bytes; an HTML error or login page saved as .jpg is not a site policy problem.
+			if ( '' !== $detected_mime && 0 !== strpos( $detected_mime, 'image/' ) ) {
+				return new WP_Error(
+					'not_an_image',
+					sprintf(
+						/* translators: %s: content type the URL returned, e.g. text/html */
+						__( 'The URL did not return an image. It returned %s content, usually an error, login or hotlink protection page served in place of the image, so there is nothing to add to the Media Library. This is not a file type setting or a permissions problem. Use a URL that points directly at the image file, or upload the image another way.', 'unlimited-wp-mcp-next' ),
+						$detected_mime
+					),
+					UWNext_Error_Contract::data( 'invalid_input', false, array( 'status' => 400, 'detected_type' => $detected_mime ) )
+				);
+			}
+			return new WP_Error(
+				'invalid_file_type',
+				sprintf(
+					/* translators: %s: file type, e.g. .jpg or image/avif */
+					__( 'WordPress does not allow uploading this file type (%s) on this site. The allowed list is site policy, set by the upload_mimes filter (a file-type plugin or theme code, or Network Settings > Upload Settings on multisite); it is not a permissions or storage problem. Use a standard image format (jpg, png, gif, webp) or ask a site administrator to permit the type.', 'unlimited-wp-mcp-next' ),
+					self::sideload_type_label( $ext, $detected_mime )
+				),
+				UWNext_Error_Contract::data( 'not_supported', false, array( 'status' => 415 ) )
+			);
+		}
+		return null;
+	}
+
+	/**
+	 * Name the file type by its real content when the URL's extension disagrees with it.
+	 *
+	 * @param string $ext           Extension of the sideload filename.
+	 * @param string $detected_mime Real image mime of the downloaded bytes.
+	 * @return string
+	 */
+	private static function sideload_type_label( $ext, $detected_mime ) {
+		$dotted = '.' . ( '' !== $ext ? $ext : '?' );
+		$real   = wp_get_default_extension_for_mime_type( $detected_mime );
+		$same   = $real === $ext || ( 'jpg' === $real && 'jpeg' === $ext );
+		if ( '' === $detected_mime || $same ) {
+			return $dotted;
+		}
+		/* translators: 1: real content type, e.g. image/avif; 2: extension from the URL, e.g. .jpg */
+		return sprintf( __( '%1$s, although the name ends in %2$s', 'unlimited-wp-mcp-next' ), $detected_mime, $dotted );
+	}
+
+	/**
+	 * media_handle_sideload(), telling a refusal by an upload prefilter (another
+	 * plugin's SVG sanitizer or file rule) apart from a filesystem failure: core
+	 * wraps both as the same upload_error.
+	 *
+	 * @param array  $file_array name + tmp_name.
+	 * @param int    $post_id    Parent post.
+	 * @param string $title      Attachment title.
+	 * @return int|WP_Error Attachment id, or the wrapped failure.
+	 */
+	private static function media_sideload( array $file_array, $post_id, $title ) {
+		$refused = false;
+		$watch   = function ( $file ) use ( &$refused, $file_array ) {
+			if ( is_array( $file ) && ( $file['tmp_name'] ?? null ) === $file_array['tmp_name'] ) {
+				$refused = isset( $file['error'] ) && ! is_numeric( $file['error'] ) && $file['error'];
+			}
+			return $file;
+		};
+		add_filter( 'wp_handle_sideload_prefilter', $watch, PHP_INT_MAX );
+		try {
+			$id = media_handle_sideload( $file_array, $post_id, $title );
+		} finally {
+			remove_filter( 'wp_handle_sideload_prefilter', $watch, PHP_INT_MAX );
+		}
+		return is_wp_error( $id ) ? self::sideload_failure_error( $id, $refused ) : $id;
+	}
+
+	/**
+	 * Wrap a media_handle_sideload() failure that passed the type gate. A refusal
+	 * by an upload prefilter or core's own type check is the site's upload rules;
+	 * what is left is the move/write/directory family, so the filesystem cause holds.
+	 *
+	 * @param WP_Error $inner
+	 * @param bool     $refused Whether an upload prefilter set the error.
+	 * @return WP_Error
+	 */
+	public static function sideload_failure_error( $inner, $refused = false ) {
+		$message = $inner->get_error_message();
+		if ( $refused || __( 'Sorry, you are not allowed to upload this file type.' ) === $message ) {
+			return new WP_Error(
+				'invalid_file_type',
+				sprintf(
+					/* translators: %s: the site's own refusal message */
+					__( 'This site refused the file before saving it ("%s"). One of the site\'s upload rules turned it away: the allowed file types, or another plugin\'s upload filter, such as an SVG plugin that could not sanitize the file or that limits who may upload SVG. Resending the same file gets the same answer. Use a PNG or JPG instead, or ask a site administrator to allow this file in that plugin\'s settings or the site\'s allowed file types.', 'unlimited-wp-mcp-next' ),
+					$message
+				),
+				UWNext_Error_Contract::data( 'not_supported', false, array( 'status' => 415, 'inner_code' => (string) $inner->get_error_code() ) )
+			);
+		}
+		return new WP_Error(
+			'upload_failed',
+			sprintf(
+				/* translators: %s: error message */
+				__( 'Failed to upload image: %s', 'unlimited-wp-mcp-next' ),
+				$inner->get_error_message()
+			),
+			UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 500, 'inner_code' => (string) $inner->get_error_code() ) )
+		);
+	}
+
+	/**
+	 * Download an image from a URL and add it to the WordPress media library.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function upload_media( $request ) {
+		$url      = esc_url_raw( $request->get_param( 'url' ) );
+		$title    = sanitize_text_field( $request->get_param( 'title' ) ?: '' );
+		$alt_text = sanitize_text_field( $request->get_param( 'alt_text' ) ?: '' );
+		$post_id  = absint( $request->get_param( 'post_id' ) ?: 0 );
+
+		if ( empty( $url ) ) {
+			return new WP_Error( 'invalid_url', __( 'Image URL is required.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'invalid_input', false, array( 'status' => 400 ) ) );
+		}
+
+		// SSRF: validate scheme, host, and all resolved addresses (IPv4 + IPv6)
+		// against private/loopback/link-local/reserved ranges.
+		$safety = self::validate_public_http_url( $url );
+		if ( is_wp_error( $safety ) ) {
+			return $safety;
+		}
+
+		// Load required WordPress media functions.
+		require_once ABSPATH . 'wp-admin/includes/media.php';
+		require_once ABSPATH . 'wp-admin/includes/file.php';
+		require_once ABSPATH . 'wp-admin/includes/image.php';
+
+		// Re-validate every redirect hop — a public URL can 302 to 169.254.169.254.
+		$redirect_guard = function ( $redirect_url ) {
+			$check = UWNext_REST::validate_public_http_url( $redirect_url );
+			if ( is_wp_error( $check ) ) {
+				return 0;
+			}
+			return $redirect_url;
+		};
+		add_filter( 'http_request_redirection_url', $redirect_guard, 10, 1 );
+
+		// Pin the connection to the validated public IPs so a DNS rebind can't
+		// swap in an internal address between validation and fetch. WP's curl
+		// transport disables CURLOPT_FOLLOWLOCATION and re-fires http_api_curl
+		// per redirect hop, so each hop re-pins. Streams transport (no hook)
+		// falls back to validate_public_http_url + the redirect guard above.
+		$pin_dns = function ( $handle, $args, $request_url ) {
+			$host = wp_parse_url( $request_url, PHP_URL_HOST );
+			if ( ! $host || filter_var( $host, FILTER_VALIDATE_IP ) ) {
+				return;
+			}
+			$scheme = strtolower( (string) wp_parse_url( $request_url, PHP_URL_SCHEME ) );
+			$port   = wp_parse_url( $request_url, PHP_URL_PORT );
+			if ( ! $port ) {
+				$port = ( 'https' === $scheme ) ? 443 : 80;
+			}
+			$ips = UWNext_REST::resolve_public_ips( $host );
+			// Fail closed: with no validated public IP, pin to TEST-NET-1 (RFC 5737, unroutable).
+			$target = $ips ? $ips[0] : '192.0.2.1';
+			curl_setopt( $handle, CURLOPT_RESOLVE, array( "{$host}:{$port}:{$target}" ) );
+		};
+		add_action( 'http_api_curl', $pin_dns, 10, 3 );
+
+		// Download the image to a temp file.
+		$tmp = download_url( $url, 30 );
+
+		remove_action( 'http_api_curl', $pin_dns, 10 );
+		remove_filter( 'http_request_redirection_url', $redirect_guard, 10 );
+		if ( is_wp_error( $tmp ) ) {
+			return new WP_Error(
+				'download_failed',
+				sprintf(
+					/* translators: %s: error message */
+					__( 'Failed to download image: %s', 'unlimited-wp-mcp-next' ),
+					$tmp->get_error_message()
+				),
+				UWNext_Error_Contract::data( 'wp_core', true, array( 'status' => 500 ) )
+			);
+		}
+
+		// Resolve a filename that ends in a real image extension. A title such as
+		// "…14.45.58@2x" makes pathinfo() read "58@2x" as the extension, so we
+		// validate against known image types and fall back to the file's actual
+		// mime — otherwise media_handle_sideload() rejects it as a bad file type.
+		$url_path      = wp_parse_url( $url, PHP_URL_PATH );
+		$filename      = $title ? sanitize_file_name( $title ) : basename( (string) $url_path );
+		$detected_mime = wp_get_image_mime( $tmp );
+		if ( ! $detected_mime && function_exists( 'mime_content_type' ) ) {
+			$detected_mime = mime_content_type( $tmp );
+		}
+
+		$sanitized = null;
+		if ( self::is_svg_download( $tmp, $detected_mime ) ) {
+			// SVG only ever lands sanitized, for every account (unfiltered_upload included).
+			$svg = self::sideload_svg( $tmp, $filename, $post_id, $title );
+			if ( is_wp_error( $svg ) ) {
+				wp_delete_file( $tmp );
+				return $svg;
+			}
+			$attachment_id = $svg['attachment_id'];
+			$sanitized     = $svg['sanitized'];
+		} else {
+			// Raw SVG never takes this path: a name ending in .svg gets a raster extension appended,
+			// and unfiltered_upload skips the type gate only for bytes that really are a raster image.
+			$filename = self::ensure_image_extension( $filename, $detected_mime, false );
+
+			$rejection = self::check_sideload_file( $tmp, $filename, self::may_skip_type_gate( $tmp ), $detected_mime ? (string) $detected_mime : null );
+			if ( is_wp_error( $rejection ) ) {
+				wp_delete_file( $tmp );
+				return $rejection;
+			}
+
+			$file_array = array(
+				'name'     => $filename,
+				'tmp_name' => $tmp,
+			);
+
+			// Sideload into the media library.
+			$attachment_id = self::media_sideload( $file_array, $post_id, $title );
+
+			// Clean up temp file if sideload failed.
+			if ( is_wp_error( $attachment_id ) ) {
+				wp_delete_file( $tmp );
+				return $attachment_id;
+			}
+		}
+
+		// Set alt text if provided.
+		if ( $alt_text ) {
+			update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt_text );
+		}
+
+		// Set title if provided.
+		if ( $title ) {
+			wp_update_post( array(
+				'ID'         => $attachment_id,
+				'post_title' => $title,
+			) );
+		}
+
+		$attachment_url = wp_get_attachment_url( $attachment_id );
+		$metadata       = wp_get_attachment_metadata( $attachment_id );
+
+		return rest_ensure_response( array(
+			'attachment_id' => $attachment_id,
+			'url'           => $attachment_url,
+			'title'         => get_the_title( $attachment_id ),
+			'alt_text'      => get_post_meta( $attachment_id, '_wp_attachment_image_alt', true ),
+			'width'         => ! empty( $metadata['width'] ) ? $metadata['width'] : null,
+			'height'        => ! empty( $metadata['height'] ) ? $metadata['height'] : null,
+			'mime_type'     => get_post_mime_type( $attachment_id ),
+		) + ( $sanitized ? array( 'sanitized' => $sanitized ) : array() ) );
+	}
+
+	/**
+	 * Whether a download is an SVG document: its root element is <svg>, and it is not a raster image.
+	 *
+	 * Decided on the bytes, not the URL or the name, so an HTML error page served
+	 * at logo.svg still reports as not_an_image through the normal path.
+	 *
+	 * @param string      $tmp           Downloaded temp file.
+	 * @param string|null $detected_mime Mime from wp_get_image_mime()/fileinfo.
+	 * @return bool
+	 */
+	public static function is_svg_download( $tmp, $detected_mime ) {
+		// The bytes decide, not a sniffed mime: getimagesize() reads an SVG with an
+		// XBM-style comment as image/xbm, and no raster format starts with <svg.
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- local temp file.
+		$head = is_file( $tmp ) ? file_get_contents( $tmp, false, null, 0, UWNext_SVG_Sanitizer::MAX_BYTES + 1 ) : '';
+		return UWNext_SVG_Sanitizer::looks_like_svg( (string) $head );
+	}
+
+	/**
+	 * unfiltered_upload skips WordPress's type gate only for real raster bytes, so an
+	 * SVG the detector missed can never ride it into the media library unsanitized.
+	 *
+	 * @param string $tmp Downloaded temp file.
+	 * @return bool
+	 */
+	public static function may_skip_type_gate( $tmp ) {
+		$raster = array( 'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'image/heic' );
+		return in_array( wp_get_image_mime( $tmp ), $raster, true ) && ! self::is_svg_download( $tmp, null ) && current_user_can( 'unfiltered_upload' );
+	}
+
+	/**
+	 * A safe attachment name for an SVG: one .svg extension, no other dots.
+	 *
+	 * @param string $filename Name from the title or the URL.
+	 * @return string
+	 */
+	public static function svg_filename( $filename ) {
+		$base = preg_replace( '/\.svg$/i', '', trim( (string) $filename ) );
+		$base = trim( (string) preg_replace( '/[^A-Za-z0-9_-]+/', '-', $base ), '-' );
+		if ( '' === $base ) {
+			$base = 'image';
+		}
+		return substr( $base, 0, 100 ) . '.svg';
+	}
+
+	/**
+	 * Sanitize a downloaded SVG and add it to the media library.
+	 *
+	 * The SVG type is allowed only for this one file: a wp_check_filetype_and_ext
+	 * filter vouches for exactly this temp path and name, is added around the
+	 * sideload and removed in `finally`. upload_mimes is deliberately left alone,
+	 * so no other upload (wp-admin, another request, or a nested sideload from an
+	 * add_attachment hook) ever sees SVG allowed.
+	 *
+	 * @param string $tmp      Downloaded temp file (overwritten with the clean SVG).
+	 * @param string $filename Name from the title or the URL.
+	 * @param int    $post_id  Parent post, 0 for none.
+	 * @param string $title    Attachment title.
+	 * @return array{attachment_id:int,sanitized:array}|WP_Error
+	 */
+	public static function sideload_svg( $tmp, $filename, $post_id, $title ) {
+		if ( ! current_user_can( 'upload_files' ) ) {
+			return new WP_Error( 'uwnext_missing_capability', __( 'The connected account cannot upload files (upload_files).', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'capability_role', false, array( 'status' => rest_authorization_required_code(), 'capability' => 'upload_files' ) ) );
+		}
+		$size = is_file( $tmp ) ? (int) filesize( $tmp ) : 0;
+		if ( $size > UWNext_SVG_Sanitizer::MAX_BYTES ) {
+			/* translators: %d: size limit in KB */
+			return UWNext_SVG_Sanitizer::refuse( sprintf( __( 'The SVG is larger than the %d KB limit for SVG files.', 'unlimited-wp-mcp-next' ), (int) ( UWNext_SVG_Sanitizer::MAX_BYTES / 1024 ) ) );
+		}
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- local temp file.
+		$result = UWNext_SVG_Sanitizer::sanitize( (string) file_get_contents( $tmp ) );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+		$fs = uwnext_fs();
+		if ( ! $fs || ! $fs->put_contents( $tmp, $result['content'], FS_CHMOD_FILE ) ) {
+			return new WP_Error( 'upload_failed', __( 'Failed to upload image: the sanitized SVG could not be written to a temporary file.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'filesystem', false, array( 'status' => 500 ) ) );
+		}
+
+		$name  = self::svg_filename( $filename );
+		$vouch = function ( $data, $file, $checked_name ) use ( $tmp, $name ) {
+			if ( $file === $tmp && $checked_name === $name ) {
+				return array( 'ext' => 'svg', 'type' => 'image/svg+xml', 'proper_filename' => false );
+			}
+			return $data;
+		};
+		add_filter( 'wp_check_filetype_and_ext', $vouch, 99, 3 );
+		try {
+			$rejection = self::check_sideload_file( $tmp, $name, false, 'image/svg+xml' );
+			$id        = is_wp_error( $rejection ) ? $rejection : self::media_sideload( array( 'name' => $name, 'tmp_name' => $tmp ), $post_id, $title );
+		} finally {
+			remove_filter( 'wp_check_filetype_and_ext', $vouch, 99 );
+		}
+		if ( is_wp_error( $rejection ) ) {
+			return $rejection;
+		}
+		if ( is_wp_error( $id ) ) {
+			return $id;
+		}
+		self::store_svg_metadata( (int) $id, $result['content'] );
+
+		$sanitized = array( 'removed' => $result['removed'], 'changed' => $result['changed'] );
+		$note      = UWNext_SVG_Sanitizer::summary( $result, 'media' );
+		if ( '' !== $note ) {
+			$sanitized['note'] = $note;
+		}
+		return array( 'attachment_id' => (int) $id, 'sanitized' => $sanitized );
+	}
+
+	/**
+	 * Give an SVG attachment the width, height and full size WordPress reads for images.
+	 *
+	 * Core generates no dimensions for SVG, so wp_get_attachment_image() (and
+	 * set_post_thumbnail(), which checks it) would render nothing. A 'full' size
+	 * pointing at the file itself lets image_downsize() serve it with its real
+	 * dimensions, without a site-wide image_downsize filter.
+	 *
+	 * @param int    $attachment_id Attachment ID.
+	 * @param string $svg           Sanitized SVG markup.
+	 */
+	public static function store_svg_metadata( $attachment_id, $svg ) {
+		$dims = UWNext_SVG_Sanitizer::dimensions( $svg );
+		$file = get_attached_file( $attachment_id );
+		if ( ! $dims || ! $file ) {
+			return;
+		}
+		$meta = wp_get_attachment_metadata( $attachment_id );
+		$meta = is_array( $meta ) ? $meta : array();
+
+		$meta['width']  = $dims[0];
+		$meta['height'] = $dims[1];
+		if ( empty( $meta['file'] ) ) {
+			$meta['file'] = _wp_relative_upload_path( $file );
+		}
+		$meta['sizes'] = array(
+			'full' => array(
+				'file'      => wp_basename( $file ),
+				'width'     => $dims[0],
+				'height'    => $dims[1],
+				'mime-type' => 'image/svg+xml',
+			),
+		);
+		wp_update_attachment_metadata( $attachment_id, $meta );
+	}
+
+	// ------------------------------------------------------------------
+	// Classic Theme Creation
+	// ------------------------------------------------------------------
+
+	/** Fresh authenticated proof; a cached response cannot echo a new challenge. */
+	public function classic_theme_safety( $request ) {
+		$response = new WP_REST_Response( array(
+			'challenge' => $request->get_param( 'challenge' ),
+			'uwnext_plugin_version' => defined( 'UWNext_VERSION' ) ? UWNext_VERSION : '',
+			'protocol' => 'preserve-existing-drafts-v1',
+			'authenticated_user_id' => get_current_user_id(),
+		) );
+		$response->header( 'Cache-Control', 'no-store, private, max-age=0' );
+		return $response;
+	}
+
+	public function create_classic_theme( $request ) {
+		$theme_name  = sanitize_text_field( $request->get_param( 'theme_name' ) );
+		$description = sanitize_text_field( $request->get_param( 'description' ) ?: '' );
+
+		$creator = new UWNext_Classic_Theme();
+		return $creator->create( $theme_name, $description );
+	}
+
+	// ------------------------------------------------------------------
+	// Live Reload
+	// ------------------------------------------------------------------
+
+	public function get_last_change( $request ) {
+		$since = (float) $request->get_param( 'since' );
+
+		if ( $since > 0 ) {
+			return rest_ensure_response( array(
+				'changes' => UWNext_Change_Tracker::get_since( $since ),
+			) );
+		}
+
+		// Legacy: return single latest change (same format as before).
+		return rest_ensure_response( UWNext_Change_Tracker::get() );
+	}
+
+	public function navigate( $request ) {
+		$url = esc_url_raw( $request->get_param( 'url' ) );
+		if ( empty( $url ) ) {
+			return new WP_Error( 'invalid_url', __( 'URL is required.', 'unlimited-wp-mcp-next' ), UWNext_Error_Contract::data( 'invalid_input', false, array( 'status' => 400 ) ) );
+		}
+		UWNext_Change_Tracker::mark( array(
+			'summary' => __( 'Navigate', 'unlimited-wp-mcp-next' ),
+			'url'     => $url,
+			'force'   => true,
+		) );
+		return rest_ensure_response( array( 'navigating' => $url ) );
+	}
+
+	// ------------------------------------------------------------------
+	// REST API Change Detection (replaces MCP-side markChange callback)
+	// ------------------------------------------------------------------
+
+	/**
+	 * Detect REST API write operations and mark them for live reload.
+	 * Auto-detects post/page permalinks for browser navigation.
+	 *
+	 * @param WP_REST_Response $response The response object.
+	 * @param WP_REST_Server   $server   The REST server.
+	 * @param WP_REST_Request  $request  The request object.
+	 * @return WP_REST_Response Unmodified response.
+	 */
+	public function track_rest_changes( $response, $server, $request ) {
+		// Record last UWNext activity for the admin "Connected" indicator.
+		// Gate on a capability that only trusted site roles carry so a lower-
+		// privilege user can't flip the badge to "Connected" by spoofing the header.
+		if (
+			$request->get_header( 'x_uwnext' ) === '1'
+			&& $response->get_status() < 400
+			&& ( current_user_can( 'edit_theme_options' ) || current_user_can( 'edit_posts' ) )
+		) {
+			UWNext_Connection_Status::note_activity();
+		}
+
+		$method = $request->get_method();
+
+		// Only track write operations that succeeded.
+		if ( in_array( $method, array( 'GET', 'OPTIONS', 'HEAD' ), true ) || $response->get_status() >= 400 ) {
+			return $response;
+		}
+
+		// Only track requests from the UWNext MCP server (identified by custom header).
+		if ( $request->get_header( 'x_uwnext' ) !== '1' ) {
+			return $response;
+		}
+
+		// Skip our own uwnext endpoints — they call mark() directly.
+		$route = $request->get_route();
+		if ( strpos( $route, '/unlimited-wp-mcp-next/v1/' ) === 0 ) {
+			return $response;
+		}
+
+		// Skip autosave — WordPress fires these on the edit screen and would cause reload loops.
+		if ( strpos( $route, '/autosaves' ) !== false ) {
+			return $response;
+		}
+
+		// Dynamic post type detection — handles posts, pages, products, custom types.
+		$post_types = get_post_types( array( 'show_in_rest' => true ), 'objects' );
+		$matched_pt = null;
+		$post_id    = 0;
+
+		foreach ( $post_types as $pt ) {
+			$base = $pt->rest_base ?: $pt->name;
+			if ( preg_match( "#/wp/v2/{$base}(?:/(\d+))?#", $route, $matches ) ) {
+				$matched_pt = $pt;
+				$post_id    = ! empty( $matches[1] ) ? (int) $matches[1] : 0;
+				break;
+			}
+		}
+
+		if ( $matched_pt ) {
+			$status = $response->get_status();
+			$data   = $response->get_data();
+			$singular = $matched_pt->labels->singular_name; // "Post", "Page", "Product", etc.
+
+			// Get post ID from response if not in URL.
+			if ( ! $post_id && ! empty( $data['id'] ) ) {
+				$post_id = (int) $data['id'];
+			}
+
+			// Summary.
+			if ( 201 === $status ) {
+				$summary = sprintf( 'New %s created', strtolower( $singular ) );
+			} elseif ( 'DELETE' === $method ) {
+				$summary = $singular . ' trashed';
+			} else {
+				$summary = $singular . ' updated';
+			}
+
+			// Append title.
+			if ( $post_id && 'attachment' !== $matched_pt->name ) {
+				$title = '';
+				if ( ! empty( $data['title']['rendered'] ) ) {
+					$title = wp_strip_all_tags( $data['title']['rendered'] );
+				} elseif ( ! empty( $data['title']['raw'] ) ) {
+					$title = $data['title']['raw'];
+				} else {
+					$title = get_the_title( $post_id );
+				}
+				if ( $title ) {
+					$summary .= ': ' . $title;
+				}
+			}
+
+			// Build URLs and label based on post status.
+			$url       = '';
+			$admin_url = '';
+			$label     = 'Refresh';
+
+			if ( $post_id && 'attachment' !== $matched_pt->name ) {
+				$post_status = get_post_status( $post_id );
+				$edit_link   = admin_url( "post.php?post={$post_id}&action=edit" );
+
+				if ( 'trash' === $post_status ) {
+					$admin_url = admin_url( 'edit.php?post_status=trash&post_type=' . rawurlencode( $matched_pt->name ) );
+					$label     = 'View Trash';
+				} elseif ( 'publish' === $post_status ) {
+					$url       = get_permalink( $post_id );
+					$admin_url = $url; // Published — view makes sense in admin too
+					$label     = 'View ' . $singular;
+				} else {
+					$url       = get_preview_post_link( $post_id );
+					$admin_url = $edit_link;
+					$label     = ( 201 === $status ) ? 'Edit ' . $singular : 'Preview ' . $singular;
+				}
+			}
+
+			UWNext_Change_Tracker::mark( array(
+				'summary'      => $summary,
+				'action_label' => $label,
+				'url'          => $url,
+				'admin_url'    => $admin_url,
+				'post_id'      => $post_id,
+			) );
+		} elseif ( preg_match( '#/wp/v2/settings#', $route ) ) {
+			UWNext_Change_Tracker::mark( array(
+				'summary'      => __( 'Site settings updated', 'unlimited-wp-mcp-next' ),
+				'action_label' => 'Refresh',
+			) );
+		} else {
+			UWNext_Change_Tracker::mark( array(
+				'summary'      => sprintf( '%s %s', $method, $route ),
+				'action_label' => 'Refresh',
+			) );
+		}
+
+		return $response;
+	}
+}

@@ -1,4 +1,4 @@
-#wpvibe-preview-banner {
+#uwnext-preview-banner {
 	position: fixed;
 	bottom: 0;
 	left: 0;
@@ -15,24 +15,24 @@
 	box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
 	gap: 12px;
 }
-#wpvibe-preview-banner .wpvibe-badge {
+#uwnext-preview-banner .uwnext-badge {
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
 	font-weight: 600;
 }
-#wpvibe-preview-banner .wpvibe-dot {
+#uwnext-preview-banner .uwnext-dot {
 	width: 8px;
 	height: 8px;
 	background: #22c55e;
 	border-radius: 50%;
-	animation: wpvibe-pulse 2s infinite;
+	animation: uwnext-pulse 2s infinite;
 }
-#wpvibe-preview-banner .wpvibe-info {
+#uwnext-preview-banner .uwnext-info {
 	color: #94a3b8;
 	flex: 1;
 }
-#wpvibe-preview-banner .wpvibe-btn {
+#uwnext-preview-banner .uwnext-btn {
 	display: inline-block;
 	padding: 6px 14px;
 	border-radius: 6px;
@@ -43,29 +43,29 @@
 	border: none;
 	transition: all 0.15s ease;
 }
-#wpvibe-preview-banner .wpvibe-btn-live {
+#uwnext-preview-banner .uwnext-btn-live {
 	background: transparent;
 	color: #94a3b8;
 	border: 1px solid #475569;
 }
-#wpvibe-preview-banner .wpvibe-btn-live:hover {
+#uwnext-preview-banner .uwnext-btn-live:hover {
 	background: #475569;
 	color: #f8fafc;
 }
-#wpvibe-preview-banner .wpvibe-btn-stop {
+#uwnext-preview-banner .uwnext-btn-stop {
 	background: #f8fafc;
 	color: #1e293b;
 	border: 1px solid #f8fafc;
 }
-#wpvibe-preview-banner .wpvibe-btn-stop:hover {
+#uwnext-preview-banner .uwnext-btn-stop:hover {
 	background: #e2e8f0;
 	border-color: #e2e8f0;
 	color: #0f172a;
 }
-@keyframes wpvibe-pulse {
+@keyframes uwnext-pulse {
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0.4; }
 }
-body.wpvibe-preview-active {
+body.uwnext-preview-active {
 	padding-bottom: 50px !important;
 }

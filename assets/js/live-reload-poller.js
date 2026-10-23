@@ -7,7 +7,7 @@
 	var idleTimeout = 300000;
 	var maxFailures = 5;
 	var stallCooldown = 300000;
-	var stallKey = 'wpvibeLiveReloadStalledAt';
+	var stallKey = 'uwnextLiveReloadStalledAt';
 
 	// localStorage, so a stall seen in one tab stops every tab on the site: each open preview tab held its own worker (#738).
 	function stalledRecently() {
@@ -47,7 +47,7 @@
 		return validChange( data );
 	}
 
-	window.WPVibePoller = {
+	window.UWNextPoller = {
 		start: function ( options ) {
 			// A delayed footer script must never start a second poller in this tab.
 			if ( active ) return active;
