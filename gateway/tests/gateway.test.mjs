@@ -26,8 +26,22 @@ async function env() {
 function request(path,body,who=user) {return new Request(origin+path,{method:'POST',headers:{'content-type':'application/json',origin,...(who?{'oai-authenticated-user-id':who}:{})},body:JSON.stringify(body)});}
 async function rpc(e,name,args,who=user) {const r=await gateway.fetch(request('/mcp',{jsonrpc:'2.0',id:7,method:'tools/call',params:{name,arguments:args}},who),e);return {response:r,body:await r.json()};}
 function response(body,status=200) {return new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});}
-function approvalResponse(site=B) {return response({jsonrpc:'2.0',id:1,result:{isError:true,content:[{type:'text',text:JSON.stringify({code:'approval_required',message:'Review',data:{status:409,approval_id:approval,expires:Math.floor(Date.now()/1000)+600,approval_url:site.canonical_url+'/wp-admin/admin.php?page=unlimited-wp-mcp&approval='+approval}})}]}});}
+function approvalResponse(site=B) {return response({jsonrpc:'2.0',id:1,result:{isError:true,content:[{type:'text',text:JSON.stringify({code:'approval_required',message:'Review',data:{status:409,approval_id:approval,expires:Math.floor(Date.now()/1000)+600,approval_url:site.canonical_url+'/wp-admin/admin.php?page=unlimited-wp-mcp-next&approval='+approval}})}]}});}
 async function issue(e,site=B) {globalThis.fetch=async()=>approvalResponse(site);const result=await rpc(e,'content_edit',{site:site.alias,target_type:'post',post_id:123,old_content:'before',new_content:'after'});assert.ok(result.body.result?.isError,'Fixture must reach approval gate');assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM approval_scopes').get().n,1);return result;}
+
+for(const wrongPage of ['unlimited-wp-mcp','wpvibe']) test('reject approval for another product page '+wrongPage,async()=>{
+  const e=await env();let count=0;
+  globalThis.fetch=async()=>{
+    count++;const body=await approvalResponse(B).json();
+    const payload=JSON.parse(body.result.content[0].text);
+    const url=new URL(payload.data.approval_url);url.searchParams.set('page',wrongPage);
+    payload.data.approval_url=url.href;body.result.content[0].text=JSON.stringify(payload);
+    return response(body);
+  };
+  const x=await rpc(e,'content_edit',{site:B.alias,target_type:'post',post_id:123,old_content:'before',new_content:'after'});
+  assert.match(x.body.error.message,/Approval hostname or identifier mismatch/);
+  assert.equal(count,1);assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM approval_scopes').get().n,0);
+});
 
 test('one shared 51-tool catalog plus discovery, explicit site on all tools',async()=>{
   const e=await env(),r=await gateway.fetch(request('/mcp',{jsonrpc:'2.0',id:1,method:'tools/list'},''),e),body=await r.json();

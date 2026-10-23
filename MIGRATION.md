@@ -61,3 +61,5 @@ artifacts were not changed. No production deployment is authorized. Continue wit
 remaining builder fixtures, MySQL-specific behavior and isolated end-to-end
 gateway-to-WordPress tests before production acceptance. Real builder/browser
 acceptance requires an authenticated disposable site with the relevant plugins.
+
+2026-10-23 staging findings: exact REST draft creation and content_edit completed on Divi 4.27.9/MariaDB 10.6.28; browser preview and existing-content visual editor verified. Constant SQL SELECT and single-use background read completed with receipts. Image-provider search returned image_provider_unavailable; live image search remains pending. Gateway approval validation now requires the Next admin page, matching actual staging responses; legacy-product approval URLs are refused. Gateway tests: 51 passed. Production unchanged.

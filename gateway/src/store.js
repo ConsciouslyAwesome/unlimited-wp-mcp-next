@@ -39,7 +39,7 @@ export async function bindApproval(env,user,site,name,args,c,data) {
   const now=Date.now(),expires=Number(data.expires)*1000;
   if(!/^[a-f0-9]{48}$/.test(data.approval_id||'') || !Number.isFinite(expires)||expires<=now||expires>now+601000) throw new Denied('Invalid upstream approval scope.',-32009);
   const url=new URL(data.approval_url);
-  if(url.origin!==site.canonical_url || url.pathname!=='/wp-admin/admin.php' || url.searchParams.get('page')!=='unlimited-wp-mcp' || url.searchParams.get('approval')!==data.approval_id) throw new Denied('Approval hostname or identifier mismatch.',-32009);
+  if(url.origin!==site.canonical_url || url.pathname!=='/wp-admin/admin.php' || url.searchParams.get('page')!=='unlimited-wp-mcp-next' || url.searchParams.get('approval')!==data.approval_id) throw new Denied('Approval hostname or identifier mismatch.',-32009);
   await run(env,'INSERT INTO approval_scopes(approval_hash,user_id,site_id,canonical_url,tool_name,arguments_hash,credential_id,created_at,expires_at,used) VALUES(?,?,?,?,?,?,?,?,?,0)',await hash(data.approval_id),user,site.site_id,site.canonical_url,name,await hash(stable(args)),c.credential_id,now,expires);
   return {site_id:site.site_id,canonical_url:site.canonical_url,hostname:url.hostname,tool:name,arguments_hash:await hash(stable(args)),created_at:now,expires_at:expires};
 }
