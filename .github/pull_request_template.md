@@ -10,7 +10,7 @@
 
 - [ ] Bug fix
 - [ ] New feature
-- [ ] Security fix (if not already disclosed via security@wpvibe.ai, please use that channel instead)
+- [ ] Security fix (if not already disclosed via security@uwnext.ai, please use that channel instead)
 - [ ] Documentation
 - [ ] Refactor / cleanup
 

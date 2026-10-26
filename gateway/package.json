@@ -1,0 +1,9 @@
+{
+  "name": "unlimited-wp-mcp-next-gateway",
+  "version": "2.0.0-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}

@@ -27,7 +27,7 @@ function {{FUNCTION_PREFIX}}_scripts() {
 	// Compiled Tailwind output. Present only after publish; skip in draft
 	// mode so the browser CDN can take over. filemtime() doubles as cache-bust.
 	$dist     = get_stylesheet_directory() . '/dist/styles.css';
-	$is_draft = get_option( 'wpvibe_draft_theme' ) === get_stylesheet();
+	$is_draft = get_option( 'uwnext_draft_theme' ) === get_stylesheet();
 	if ( ! $is_draft && file_exists( $dist ) ) {
 		wp_enqueue_style(
 			'{{THEME_SLUG}}-compiled',
@@ -143,15 +143,15 @@ function {{FUNCTION_PREFIX}}_setup_pages() {
 add_action( 'after_switch_theme', '{{FUNCTION_PREFIX}}_setup_pages' );
 
 /* ───────────────────────────────────────────────────────────────────────────
-   Editable surfaces (Settings -> WPVibe + per-page meta).
+   Editable surfaces (Settings -> UWNext + per-page meta).
 
    Wrapped in function_exists so the theme degrades gracefully if the
-   WPVibe plugin is deactivated. Read with get_option / get_post_meta
+   UWNext plugin is deactivated. Read with get_option / get_post_meta
    anywhere in templates.
    ─────────────────────────────────────────────────────────────────────────── */
 
-if ( function_exists( 'wpvibe_setting_register' ) ) {
-	wpvibe_setting_register( '{{FUNCTION_PREFIX}}_tagline', array(
+if ( function_exists( 'uwnext_setting_register' ) ) {
+	uwnext_setting_register( '{{FUNCTION_PREFIX}}_tagline', array(
 		'type'        => 'text',
 		'label'       => 'Site tagline',
 		'description' => 'Appears in the site header next to the brand name.',
@@ -159,13 +159,13 @@ if ( function_exists( 'wpvibe_setting_register' ) ) {
 	) );
 }
 
-if ( function_exists( 'wpvibe_field_register' ) ) {
-	wpvibe_field_register( 'page', 'hero_heading', array(
+if ( function_exists( 'uwnext_field_register' ) ) {
+	uwnext_field_register( 'page', 'hero_heading', array(
 		'type'        => 'text',
 		'label'       => 'Hero heading',
 		'description' => 'Large headline at the top of the page. Shown on front-page.php.',
 	) );
-	wpvibe_field_register( 'page', 'hero_subheading', array(
+	uwnext_field_register( 'page', 'hero_subheading', array(
 		'type'        => 'textarea',
 		'label'       => 'Hero subheading',
 		'description' => 'Supporting text below the hero heading.',
