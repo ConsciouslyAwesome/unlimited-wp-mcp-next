@@ -1,13 +1,30 @@
-# Migration status — 2026-10-23
+# Migration and upstream-divergence status — 2026-11-01
 
 Upstream identity is pinned in UPSTREAM.md. This development branch adapts GPL
-WordPress functionality to an independent Unlimited control plane. It is not a
-production release or a functional-parity acceptance claim.
+WordPress functionality to an independent Unlimited control plane. The focused
+audit compares the current branch to exact upstream commit
+`62bc77ccd1c15faf766f527a7935fe32f1b227d3`. It does not treat independent
+commercial-builder certification as part of the fork objective.
+
+## Meaningful divergence categories
+
+| Category | File/capability families | Why it remains |
+| --- | --- | --- |
+| Required hosted-service/control-plane replacement | Plugin bootstrap; removal of vendor OAuth, relay/ping, signed worker proof, approval bypass, hosted connection/status/preflight, dashboard/recipe/review/account UI, self-update and vendor uninstall flows; `includes/local-auth.php`, `local-capabilities.php`, `local-mcp.php`, `local-store.php`, `local-jobs.php`, `local-resources.php`, `local-tools.php`; `gateway/`; local workflows | Replaces the WPVibe-hosted relay, callbacks, proof keys, catalog, account/quota surface, progressive skill content, detached execution and image proxy with Unlimited-owned infrastructure. |
+| Required Unlimited integration/safety plumbing | `UWNext_*` namespace and private route registry; exact expiring single-use approvals; user/connection receipts; protected SQL/search-replace; bounded file reads/writes/search/list/compile; link refusal; atomic writes; PHP/SVG checks; encrypted previews; fail-closed render/publish handling; locally bundled Tailwind preview runtime | Prevents collisions with an installed upstream plugin and retains the accepted Unlimited safety model at the new trust boundary. These are intentional differences, not new end-user capabilities. |
+| Test/diagnostic/supporting changes | `tests/`, `gateway/tests/`, provenance and migration documents, regenerated catalogs, historical upstream documentation, error classification and bounded Openverse diagnostics | Proves the replacement boundary, preserves attribution and makes failures inspectable without exposing raw transport details. These do not independently re-certify upstream commercial builders. |
+| Unnecessary or accidental divergence | One historical Bricks compatibility warning had mechanically changed “older WPVibe plugin” to “older UWNext plugin”; stale documentation required broad commercial-builder parity beyond the original objective | The warning is restored to the accurate upstream identity and the stale scope language is removed. No other runtime divergence was found that was both unrelated and safe to remove. |
+
+The Elementor, Beaver, Bricks and Breakdance handler bodies were compared against
+their upstream files after normalizing only the fork namespace, text domain,
+route namespace, private route wrapper and attribution header. Their operational
+logic remains upstream-derived. No builder algorithm was reimplemented for this
+audit, and Lite/free editions are not evidence for commercial editions.
 
 | Source capability | Disposition | Current status |
 | --- | --- | --- |
-| Content, files, draft themes, classic themes, previews, custom fields | Adapt GPL source | Private descriptors behind local auth/approvals; broad runtime parity pending |
-| Elementor, Beaver, Breakdance, Bricks, SeedProd compile-login minting | Adapt GPL source | Imported and gated; actual builder integrations and compile automation pending |
+| Content, files, draft themes, classic themes, previews, custom fields | Adapt GPL source | Private descriptors behind local auth/approvals; scoped staging evidence exists |
+| Elementor, Beaver, Breakdance, Bricks, SeedProd compile-login minting | Preserve GPL source | Upstream handlers retained behind the local route/approval boundary; no separate commercial certification required for the fork objective |
 | Native CLI | Adapt GPL source | All 131 upstream allowlist entries preserved; native SQL reads/writes and search-replace use exact local approvals; security options, identity/audit tables remain protected |
 | SVG sanitizer, Alpine | Reuse | Original asset/license text preserved |
 | Tailwind preview | Adapt | Locally bundled 4.1.13 with MIT notice; no browser CDN dependency |
@@ -17,8 +34,8 @@ production release or a functional-parity acceptance claim.
 | Hosted preflight, recipes, account links, promotional UI | Replace/remove service dependency | Removed from active code; upstream documentation kept only as historical attribution |
 | Hosted image search, progressive skill content | Rebuild independently | Openverse adapter preserves license/creator metadata and propagates provider rate limits; four locally authored workflows replace unavailable hosted content |
 | Detached jobs | Rebuild independently | Single-use local cron jobs bind original approval/site/user/connection/arguments; revoked grants cannot execute; queued/completed receipts verified |
-| Hosted browser orchestration | Rebuild independently | Page-scoped builder-login minting retained; full browser-driven compile acceptance requires the actual builder environment |
-| Upstream self-update | Replace | Refuses upstream update path; independent verified-release workflow pending |
+| Hosted browser orchestration | Replace boundary only | Page-scoped builder-login minting retained behind Unlimited approvals; upstream builder behavior is not reimplemented |
+| Upstream self-update | Replace | Refuses the upstream update path; packages are produced by the independent verified-release workflow |
 
 Static audit records every literal hosted-domain match, every route-registration
 location, HTTP call and worker-proof review location from the pinned upstream.
@@ -53,14 +70,15 @@ trigger); a queued receipt is never treated as proof of execution.
 Openverse implementation references (independent service; its limits still apply):
 https://docs.openverse.org/packages/js/api_client/index.html and
 https://docs.openverse.org/api/reference/authentication_and_throttling.html.
-The API tool could not verify live access (HTTP 403); provider tests mock HTTP,
-including HTTP 429 without retry. No live provider acceptance is claimed.
+Provider tests cover bounded transient retries and terminal HTTP 429 behavior.
+The 2026-11-01 staging search timeout matches WordPress/openverse issue #5649:
+static/stats connectivity succeeds while uncached search requests return no bytes.
+It is an upstream external-dependency exception, not grounds for adapter redesign.
 
-Production WordPress, existing gateways, Site registrations and accepted release
-artifacts were not changed. No production deployment is authorized. Continue with
-remaining builder fixtures, MySQL-specific behavior and isolated end-to-end
-gateway-to-WordPress tests before production acceptance. Real builder/browser
-acceptance requires an authenticated disposable site with the relevant plugins.
+Production WordPress, existing production gateways, Site registrations and
+accepted production artifacts were not changed. No production deployment is
+authorized. Commercial-builder certification is outside the closing objective;
+the fork preserves those upstream handlers and does not claim independent parity.
 
 2026-10-23 staging findings: exact REST draft creation and content_edit completed on Divi 4.27.9/MariaDB 10.6.28; browser preview and existing-content visual editor verified. Constant SQL SELECT and single-use background read completed with receipts. Image-provider search returned image_provider_unavailable; live image search remains pending. Gateway approval validation now requires the Next admin page, matching actual staging responses; legacy-product approval URLs are refused. Gateway tests: 51 passed. Production unchanged.
 

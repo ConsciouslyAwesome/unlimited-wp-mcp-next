@@ -13,5 +13,8 @@
 - Retain legacy theme field APIs, the editor field sidebar and builder hooks.
 - Gate extension REST requests even when their HTTP method is GET.
 - Validate 160 isolated WordPress checks and 49 multi-site gateway checks.
+- Complete a focused upstream-divergence audit: commercial-builder handlers retain
+  upstream behavior apart from namespacing and local control-plane plumbing; restore
+  the historical WPVibe identity in the Bricks legacy-layout compatibility warning.
 
-Development only; parity and release acceptance remain pending.
+Development only; production deployment remains separately prohibited.

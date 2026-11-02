@@ -15,5 +15,6 @@ holding the local runtimes. `UWNEXT_EVIDENCE` is `source` or `package` and separ
 their evidence. The plugin package contains no tests or gateway credentials.
 
 These fixtures do not contain the commercial builders. Their real browser and
-compile behavior requires an authenticated disposable builder environment.
+compile behavior would require authenticated licensed environments, but separate
+commercial-builder certification is outside the fork-and-decouple objective.
 No local test result is a production, MySQL or live-provider acceptance claim.

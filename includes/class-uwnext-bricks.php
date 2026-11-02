@@ -434,7 +434,7 @@ class UWNext_Bricks {
 		if ( $legacy ) {
 			$out['warnings'] = array( sprintf(
 				/* translators: %s: template type (header or footer) */
-				__( 'This %s layout is stored under the content key by an older UWNext plugin, so Bricks does not render it. Saving it back with save-page and this id moves it to the right key.', 'unlimited-wp-mcp-next' ),
+				__( 'This %s layout is stored under the content key by an older WPVibe plugin, so Bricks does not render it. Saving it back with save-page and this id moves it to the right key.', 'unlimited-wp-mcp-next' ),
 				$template_type
 			) );
 		}
