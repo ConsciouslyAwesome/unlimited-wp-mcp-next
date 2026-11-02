@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Unlimited WP MCP Next
  * Description: Owner-controlled WordPress MCP server with local approvals and no usage quota.
- * Version: 2.0.0-dev
+ * Version: 2.0.0
  * Author: Unlimited WP MCP contributors
  * License: GPL-2.0-or-later
  * Text Domain: unlimited-wp-mcp-next
@@ -12,7 +12,7 @@
  */
 defined('ABSPATH') || exit;
 define('UWNext_NAME', 'Unlimited WP MCP Next');
-define('UWNext_VERSION', '2.0.0-dev');
+define('UWNext_VERSION', '2.0.0');
 define('UWNext_PROTOCOL', '2026-07-28');
 define('UWNext_NS', 'unlimited-wp-mcp-next/v1');
 define('UWNext_PLUGIN_DIR', plugin_dir_path(__FILE__));

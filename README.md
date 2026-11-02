@@ -4,7 +4,8 @@ Independent GPL-2.0-or-later development fork of Awesome Motive / SeedProd's
 WordPress plugin. See [UPSTREAM.md](UPSTREAM.md) for provenance and attribution.
 This is not a WPVibe or SeedProd product and has no affiliation or endorsement.
 
-Development version: **2.0.0-dev**. Do not install on production.
+Final release candidate: **2.0.0**. Production deployment has not been performed
+and requires separate explicit approval.
 
 WordPress handlers run behind Unlimited's own local OAuth/application-password
 authentication, exact-argument browser approvals, audit events and connection-scoped
@@ -29,8 +30,8 @@ Workflow guidance is authored locally. See [MIGRATION.md](MIGRATION.md).
 The fork preserves upstream builder handlers; it does not independently certify
 commercial builders or claim broader behavior than upstream. The original
 fork-and-decouple objective is documented in [MIGRATION.md](MIGRATION.md).
-No production acceptance is claimed. WordPress 6.6+, PHP 8.1+ and OpenSSL are
-required.
+Package verification is separate from deployment acceptance. WordPress 6.6+,
+PHP 8.1+ and OpenSSL are required.
 
 All mutations need one fresh, exact-operation browser approval. If execution has
 started and its result is uncertain, inspect its receipt; never blindly retry.

@@ -12,4 +12,5 @@ Copyright Tailwind Labs, Inc.; MIT license: assets/vendor/TAILWIND-LICENSE.
 Modified 2026-10-22 by Unlimited WP MCP contributors: independent identity,
 private handler registry, local authentication, browser approvals, audit and
 receipts. No affiliation or endorsement by Awesome Motive or SeedProd.
-This development source is not accepted for production installation.
+This source is the final 2.0.0 release candidate. Package verification does not
+constitute production deployment or deployment acceptance.
