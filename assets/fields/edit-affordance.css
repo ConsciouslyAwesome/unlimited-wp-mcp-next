@@ -1,34 +1,34 @@
 /* Hover-to-edit affordance. Frontend only, only loaded for users with
- * edit capability. Theme-overridable via --wpvibe-edit-color. */
+ * edit capability. Theme-overridable via --uwnext-edit-color. */
 
 :root {
-	--wpvibe-edit-color: #2271b1;          /* WordPress admin blue */
-	--wpvibe-edit-color-pin-fg: #ffffff;
+	--uwnext-edit-color: #2271b1;          /* WordPress admin blue */
+	--uwnext-edit-color-pin-fg: #ffffff;
 }
 
-[data-wpvibe-edit],
-[data-wpvibe-edit-setting] {
+[data-uwnext-edit],
+[data-uwnext-edit-setting] {
 	position: relative;
 	transition: outline 100ms ease;
 }
 
-[data-wpvibe-edit]:hover,
-[data-wpvibe-edit]:focus-within,
-[data-wpvibe-edit-setting]:hover,
-[data-wpvibe-edit-setting]:focus-within {
-	outline: 2px dashed var(--wpvibe-edit-color);
+[data-uwnext-edit]:hover,
+[data-uwnext-edit]:focus-within,
+[data-uwnext-edit-setting]:hover,
+[data-uwnext-edit-setting]:focus-within {
+	outline: 2px dashed var(--uwnext-edit-color);
 	outline-offset: 4px;
 }
 
-.wpvibe-edit-pin {
+.uwnext-edit-pin {
 	position: absolute;
 	top: -28px;
 	right: -4px;
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
-	background: var(--wpvibe-edit-color);
-	color: var(--wpvibe-edit-color-pin-fg);
+	background: var(--uwnext-edit-color);
+	color: var(--uwnext-edit-color-pin-fg);
 	font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
@@ -42,7 +42,7 @@
 	white-space: nowrap;
 }
 
-.wpvibe-edit-pin svg {
+.uwnext-edit-pin svg {
 	width: 12px;
 	height: 12px;
 	fill: currentColor;
@@ -51,7 +51,7 @@
 /* Invisible hover bridge across the gap between the pin and the editable
  * element. Without this, the mouse loses :hover while crossing the gap, the
  * pin fades, and the user can never reach it. */
-.wpvibe-edit-pin::after {
+.uwnext-edit-pin::after {
 	content: '';
 	position: absolute;
 	top: 100%;
@@ -60,20 +60,20 @@
 	height: 12px;
 }
 
-[data-wpvibe-edit]:hover > .wpvibe-edit-pin,
-[data-wpvibe-edit]:focus-within > .wpvibe-edit-pin,
-[data-wpvibe-edit-setting]:hover > .wpvibe-edit-pin,
-[data-wpvibe-edit-setting]:focus-within > .wpvibe-edit-pin,
-.wpvibe-edit-pin:hover,
-.wpvibe-edit-pin:focus {
+[data-uwnext-edit]:hover > .uwnext-edit-pin,
+[data-uwnext-edit]:focus-within > .uwnext-edit-pin,
+[data-uwnext-edit-setting]:hover > .uwnext-edit-pin,
+[data-uwnext-edit-setting]:focus-within > .uwnext-edit-pin,
+.uwnext-edit-pin:hover,
+.uwnext-edit-pin:focus {
 	opacity: 1;
 	pointer-events: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {
-	[data-wpvibe-edit],
-	[data-wpvibe-edit-setting],
-	.wpvibe-edit-pin {
+	[data-uwnext-edit],
+	[data-uwnext-edit-setting],
+	.uwnext-edit-pin {
 		transition: none;
 	}
 }

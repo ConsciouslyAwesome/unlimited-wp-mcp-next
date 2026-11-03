@@ -1,8 +1,8 @@
 /**
- * WPVibe Live Reload — polls for changes and updates the browser.
+ * UWNext Live Reload — polls for changes and updates the browser.
  *
- * Expects wpvibeLiveReload to be localized via wp_localize_script with:
- *   endpoint  — REST URL for /wpvibe/v1/last-change
+ * Expects uwnextLiveReload to be localized via wp_localize_script with:
+ *   endpoint  — REST URL for /unlimited-wp-mcp-next/v1/last-change
  *   nonce     — wp_rest nonce
  *   isAdmin   — "1" or ""
  *   postId    — current post ID being edited (admin only), or "0"
@@ -11,8 +11,8 @@
 (function () {
 	'use strict';
 
-	var config = window.wpvibeLiveReload;
-	if ( ! config || ! config.endpoint || ! window.WPVibePoller ) {
+	var config = window.uwnextLiveReload;
+	if ( ! config || ! config.endpoint || ! window.UWNextPoller ) {
 		return;
 	}
 
@@ -92,18 +92,18 @@
 		var btnLabel = actionLabel || ( targetUrl ? 'View' : 'Refresh' );
 		var actionBtn = '';
 		if ( targetUrl ) {
-			actionBtn = '<a href="' + targetUrl + '" target="_blank" class="wpvibe-toast-btn">' + escHtml( btnLabel ) + '</a>';
+			actionBtn = '<a href="' + targetUrl + '" target="_blank" class="uwnext-toast-btn">' + escHtml( btnLabel ) + '</a>';
 		} else {
-			actionBtn = '<button class="wpvibe-toast-btn" onclick="location.reload()">' + escHtml( btnLabel ) + '</button>';
+			actionBtn = '<button class="uwnext-toast-btn" onclick="location.reload()">' + escHtml( btnLabel ) + '</button>';
 		}
 
 		var toast = document.createElement( 'div' );
-		toast.id = 'wpvibe-reload-toast';
+		toast.id = 'uwnext-reload-toast';
 		toast.innerHTML =
-			'<span class="wpvibe-toast-dot"></span>' +
-			'<span class="wpvibe-toast-text">' + escHtml( summary ) + '</span>' +
+			'<span class="uwnext-toast-dot"></span>' +
+			'<span class="uwnext-toast-text">' + escHtml( summary ) + '</span>' +
 			actionBtn +
-			'<button class="wpvibe-toast-dismiss" onclick="this.parentElement.remove()">&times;</button>';
+			'<button class="uwnext-toast-dismiss" onclick="this.parentElement.remove()">&times;</button>';
 		document.body.appendChild( toast );
 
 		if ( ! targetUrl ) {
@@ -112,7 +112,7 @@
 	}
 
 	function removeToast() {
-		var existing = document.getElementById( 'wpvibe-reload-toast' );
+		var existing = document.getElementById( 'uwnext-reload-toast' );
 		if ( existing ) {
 			existing.remove();
 		}
@@ -129,7 +129,7 @@
 	}
 
 	// Mark that the full script loaded (prevents head fallback from running).
-	window.__wpvibe_live_reload = true;
+	window.__uwnext_live_reload = true;
 
-	window.WPVibePoller.start( { url: pollUrl, nonce: nonce, interval: pollInterval, onData: receiveChanges } );
+	window.UWNextPoller.start( { url: pollUrl, nonce: nonce, interval: pollInterval, onData: receiveChanges } );
 })();

@@ -1,0 +1,1472 @@
+<?php
+/** Derived from Awesome Motive / SeedProd WPVibe 1.20.5; modified 2026-10-22 for Unlimited WP MCP Next. GPL-2.0-or-later; see UPSTREAM.md. */
+/**
+ * WP-CLI emulator: destructive classification and approval dry-run previews.
+ *
+ * Extracted from class-uwnext-cli.php (mechanical split; no behavior change).
+ * Handlers may still re-check $this->skip_destructive; this trait is not the
+ * entire approval path.
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+trait UWNext_CLI_Security {
+
+
+	// ------------------------------------------------------------------
+	// Destructive classifier
+	// ------------------------------------------------------------------
+
+	/**
+	 * Detect whether a command needs explicit human approval before execution.
+	 * Returns null when safe to auto-execute, or an array{reason, operation, dry_run}
+	 * the Worker wraps into an approval URL.
+	 *
+	 * The list is intentionally narrow — most operations auto-execute. See
+	 * PRICING.md / the destructive-actions plan for the full rationale.
+	 */
+	private function classify_destructive( $command_key, $meta, $tokens, $key_length ) {
+		// MUST parse exactly like dispatch() — the approval gate previews what
+		// the handler will execute, so both use the one split_tokens().
+		list( $positional, $flags ) = $this->split_tokens( $tokens, $key_length );
+
+		// Gate on irreversibility, not count. Reversible ops run freely at any
+		// scale — a trash (post delete) is restorable, and post update keeps a
+		// WordPress revision. Only irreversible ops confirm: user delete and
+		// plugin uninstall (no trash analog), and post delete --force (bypasses
+		// trash, permanent). When an irreversible op names several targets,
+		// enumerate them so one approval shows the full list. Three explicit IDs
+		// is not "bulk" — the trigger is permanence, not how many.
+		$force_delete = ( in_array( $command_key, array( 'post delete', 'comment delete' ), true ) && ! empty( $flags['force'] ) );
+		if ( ( ! empty( $meta['destructive'] ) || $force_delete ) && ! empty( $meta['bulk'] ) ) {
+			$offset  = isset( $meta['bulk']['offset'] ) ? (int) $meta['bulk']['offset'] : 0;
+			$targets = array_slice( $positional, $offset );
+			if ( count( $targets ) > 1 ) {
+				// Force-delete shares an operation prefix across single + bulk so a
+				// session bypass (post_delete_force:*) covers both forms.
+				$prefix = $force_delete ? $meta['bulk']['label'] . '_delete_force' : $command_key;
+				$reason = $force_delete
+					/* translators: 1: number of targets, 2: plural noun */
+					? sprintf( __( 'Permanently deletes %1$d %2$s, bypassing trash. They cannot be restored. Review the list before approving.', 'unlimited-wp-mcp-next' ), count( $targets ), $meta['bulk']['label'] . 's' )
+					/* translators: 1: command, 2: target count */
+					: sprintf( __( 'Permanently affects %2$d targets via "%1$s" and cannot be undone. Review the list before approving.', 'unlimited-wp-mcp-next' ), $command_key, count( $targets ) );
+				return array(
+					'operation' => $prefix . ':bulk:' . implode( ',', $targets ),
+					'reason'    => $reason,
+					'dry_run'   => $this->build_bulk_dry_run( $command_key, $meta['bulk'], $targets, $flags ),
+				);
+			}
+		}
+
+		// Single-target unconditionally-destructive: user delete, plugin uninstall.
+		if ( ! empty( $meta['destructive'] ) ) {
+			return array(
+				'operation' => $command_key . ':' . ( $positional[0] ?? '?' ),
+				'reason'    => $this->reason_for_command( $command_key ),
+				'dry_run'   => $this->build_dry_run( $command_key, $positional, $flags ),
+			);
+		}
+
+		// search-replace rewrites content in place across tables. --dry-run is a
+		// pure read and runs freely; the live run needs approval with a
+		// match-count preview.
+		if ( 'search-replace' === $command_key ) {
+			if ( ! empty( $flags['dry_run'] ) ) {
+				return null;
+			}
+			$old = $positional[0] ?? '';
+			if ( '' === $old || ! isset( $positional[1] ) ) {
+				return null; // Handler will return a usage error.
+			}
+			$new    = $positional[1];
+			$tables = $this->resolve_search_replace_tables( array_slice( $positional, 2 ), $flags );
+			if ( ! is_wp_error( $tables ) ) {
+				list( $skip_columns, $include_columns, ) = $this->search_replace_column_filters( $flags );
+				$protected = $this->search_replace_protected_option_refusal( $tables, $skip_columns, $include_columns, $old, $new );
+				if ( $protected ) {
+					return array(
+						'operation' => 'search_replace:' . $old . '=>' . $new,
+						'reason'    => (string) $protected['stderr'],
+						'dry_run'   => null,
+						'refuse'    => $protected,
+					);
+				}
+			}
+			return array(
+				'operation' => 'search_replace:' . $old . '=>' . $new,
+				'reason'    => __( 'search-replace rewrites database content in place, table by table. It handles serialized data safely, but the change is irreversible without a backup. Review the per-table match counts before approving.', 'unlimited-wp-mcp-next' ),
+				'dry_run'   => $this->build_search_replace_dry_run( $old, $new, array_slice( $positional, 2 ), $flags ),
+			);
+		}
+
+		// plugin install --force replaces an existing install in place (the
+		// emulated rollback/downgrade path). Fresh installs run freely; force
+		// is only destructive when there are files to destroy.
+		if ( 'plugin install' === $command_key && ! empty( $flags['force'] ) && ! empty( $positional[0] ) ) {
+			$state = $this->plugin_install_replace_state( $positional[0], $flags );
+			if ( $state['replacing'] ) {
+				$installed = $state['installed'];
+				$dry_run   = array(
+					'target'            => $state['slug'],
+					'name'              => isset( $installed['Name'] ) ? $installed['Name'] : $state['slug'],
+					'installed_version' => isset( $installed['Version'] ) ? $installed['Version'] : '?',
+					'requested_version' => ! empty( $flags['version'] ) ? $flags['version'] : 'latest',
+					'active'            => $state['active'],
+				);
+				if ( ! $state['file'] ) {
+					$dry_run['note'] = __( 'The existing directory is not a readable plugin (possibly a broken or partial install); its files will still be deleted and replaced.', 'unlimited-wp-mcp-next' );
+				}
+				return array(
+					'operation' => 'plugin_install_force:' . $state['slug'],
+					'reason'    => __( 'plugin install --force replaces the installed plugin files in place. Downgrading past a version that migrated its data can break the plugin, and any manual edits to its files are lost. Review the version change before approving.', 'unlimited-wp-mcp-next' ),
+					'dry_run'   => $dry_run,
+				);
+			}
+		}
+
+		// core update: the site runs the new version immediately for every
+		// visitor and cannot roll back from inside UWNext. Resolves the offer
+		// exactly like the handler (shared resolver, parity rule at the top of
+		// this method); anything the handler will refuse (bad flags, downgrade,
+		// no offer) returns null so no approval click is burned.
+		if ( 'core update' === $command_key ) {
+			if ( null !== $this->core_update_flag_error( $flags ) ) {
+				return null;
+			}
+			$resolved = $this->resolve_core_update_offer( $flags );
+			if ( empty( $resolved['offer'] ) ) {
+				return null;
+			}
+			$offer = $resolved['offer'];
+			global $wp_version;
+			$echo = '';
+			if ( isset( $flags['minor'] ) ) {
+				$echo .= ' --minor';
+			}
+			if ( isset( $flags['version'] ) && true !== $flags['version'] ) {
+				$echo .= ' --version=' . $flags['version'];
+			}
+			return array(
+				'operation' => 'core_update:' . $offer->current,
+				'reason'    => __( 'Updates WordPress core itself. The site runs the new version immediately for every visitor; plugins or themes incompatible with it can take the site down, and core updates cannot be rolled back from inside UWNext. Review the version change before approving.', 'unlimited-wp-mcp-next' ),
+				'dry_run'   => array(
+					'command'         => 'wp core update' . $echo,
+					'current_version' => (string) $wp_version,
+					'new_version'     => (string) $offer->current,
+					'update_type'     => isset( $offer->response ) ? (string) $offer->response : '',
+					'php_required'    => isset( $offer->php_version ) ? (string) $offer->php_version : '',
+					'mysql_required'  => isset( $offer->mysql_version ) ? (string) $offer->mysql_version : '',
+				),
+			);
+		}
+
+		// Terms have no trash: deletion permanently detaches the term from every
+		// post, reparents child terms, and reassigns orphaned objects to the
+		// taxonomy's default term. The preview resolves each target exactly the
+		// way the handler will and shows the attached-post and child counts —
+		// that's what makes the approval informed. Deliberately NOT registered
+		// in drift_sensitive_fields: $term->count changes legitimately between
+		// approval and execution (a cron publishes a post), and pinning it
+		// would fail-close approved deletes.
+		if ( 'term delete' === $command_key ) {
+			$taxonomy = (string) ( $positional[0] ?? '' );
+			$targets  = array_slice( $positional, 1 );
+			// Anything the handler will refuse outright must not burn an
+			// approval click first: usage errors, nav_menu, unknown taxonomy,
+			// missing per-taxonomy delete cap.
+			if ( '' === $taxonomy || empty( $targets ) || 'nav_menu' === $taxonomy ) {
+				return null;
+			}
+			$tax = get_taxonomy( $taxonomy );
+			if ( ! $tax || ! current_user_can( $tax->cap->delete_terms ) ) {
+				return null;
+			}
+			$previews = array();
+			foreach ( $targets as $t ) {
+				$previews[] = $this->build_term_delete_target_preview( $taxonomy, (string) $t, $flags );
+			}
+			$reason = __( 'Terms are deleted permanently (WordPress has no trash for them). Posts attached to a deleted term lose that categorization, child terms are reparented, and posts left with no term in the taxonomy are reassigned to its default term. Review the attached-post counts before approving.', 'unlimited-wp-mcp-next' );
+			if ( 1 === count( $previews ) ) {
+				return array(
+					'operation' => 'term delete:' . $taxonomy . ':' . $targets[0],
+					'reason'    => $reason,
+					'dry_run'   => $previews[0],
+				);
+			}
+			return array(
+				'operation' => 'term delete:' . $taxonomy . ':bulk:' . implode( ',', $targets ),
+				'reason'    => $reason,
+				'dry_run'   => array(
+					'command'  => 'wp term delete ' . $taxonomy,
+					'taxonomy' => $taxonomy,
+					'count'    => count( $previews ),
+					'targets'  => $previews,
+				),
+			);
+		}
+
+		// rewrite structure rewrites every URL on the site. Technically reversible
+		// (set the old structure back), but on hosts without writable rewrite
+		// support (nginx, locked .htaccess) it half-applies to site-wide 404s the
+		// AI can't detect from a success response — irreversible in practice, like
+		// search-replace. Approval-gated with an old->new preview.
+		if ( 'rewrite structure' === $command_key ) {
+			$new = $positional[0] ?? '';
+			if ( '' === $new ) {
+				return null; // Handler will return a usage error.
+			}
+			$current = get_option( 'permalink_structure' );
+			$dry     = array(
+				'command' => 'wp rewrite structure ' . $new,
+				'from'    => '' === (string) $current ? __( '(plain / default)', 'unlimited-wp-mcp-next' ) : (string) $current,
+				'to'      => $new,
+			);
+			// The handler also applies these; an approval that hides them is
+			// approving a smaller change than the one that runs.
+			if ( isset( $flags['category_base'] ) ) {
+				$dry['category_base_from'] = (string) get_option( 'category_base' );
+				$dry['category_base_to']   = (string) $flags['category_base'];
+			}
+			if ( isset( $flags['tag_base'] ) ) {
+				$dry['tag_base_from'] = (string) get_option( 'tag_base' );
+				$dry['tag_base_to']   = (string) $flags['tag_base'];
+			}
+			return array(
+				'operation' => 'rewrite_structure',
+				'reason'    => __( 'Changes the permalink structure for every URL on the site. Existing inbound links and search-engine-indexed URLs to the old structure will break unless redirects are in place, and on servers without writable rewrite support (some nginx or locked-down hosts) pretty permalinks may not fully apply. Review the change before approving.', 'unlimited-wp-mcp-next' ),
+				'dry_run'   => $dry + array(
+					'note' => is_multisite()
+						? __( 'This is a multisite install: permalink behavior can differ from single-site, and this path is not covered by UWNext testing on multisite. Verify URLs after applying.', 'unlimited-wp-mcp-next' )
+						: __( 'Pretty permalinks depend on the server rewriting URLs (mod_rewrite/.htaccess on Apache, equivalent config on nginx). If the site 404s after this, the server lacks writable rewrite support.', 'unlimited-wp-mcp-next' ),
+				),
+			);
+		}
+
+		// User account & role writes (issue #37). Not flagged destructive in the
+		// ALLOWLIST because gating is CONDITIONAL: only password/email changes and
+		// changes that flip a user's administrator-equivalence need approval, so
+		// routine subscriber creation and cosmetic edits run freely. The dedicated
+		// branch resolves the effective role (incl. default_role) exactly as the
+		// handler will and never puts a password in the operation key or preview.
+		if ( in_array( $command_key, array( 'user create', 'user update', 'user set-role', 'user add-role', 'user remove-role' ), true ) ) {
+			return $this->classify_user_write( $command_key, $positional, $flags );
+		}
+
+		// db query: one rule, shared with handle_db_query (sql_verdict). A
+		// statement that starts like a read runs in the handler inside a
+		// read-only transaction, and one the server refuses as a write comes
+		// back for approval from there; a read that calls SLEEP/BENCHMARK/
+		// GET_LOCK is held; anything else is a write and is held. On the
+		// approved path a read-like statement is classified as the write it
+		// turned out to be. The statement is the raw text, never the
+		// quote-stripped token join (#385, #397).
+		if ( 'db query' === $command_key ) {
+			$sql = $this->db_query_statement( $positional );
+			if ( '' === $sql ) {
+				return null; // Handler will return a usage error.
+			}
+			list( $kind, $keyword ) = $this->sql_verdict( $sql );
+			if ( 'read' === $kind && ! $this->skip_destructive ) {
+				return null;
+			}
+			if ( 'slow' === $kind ) {
+				return array(
+					'operation' => 'db_query_side_effect',
+					'reason'    => sprintf(
+						/* translators: %s: SQL function name */
+						__( 'Slow or locking SQL function (%s) can tie up the site\'s database. Needs explicit approval.', 'unlimited-wp-mcp-next' ),
+						$keyword
+					),
+					'dry_run'   => array( 'sql' => $sql ),
+				);
+			}
+			return $this->classify_db_query_write( $sql, $keyword );
+		}
+
+		// Enabling white label hides every UWNext surface in wp-admin, including
+		// the Approval Log. A prompt-injected assistant must not be able to
+		// conceal the plugin (and its own audit trail) without a human signing
+		// off. Disabling stays approval-free so recovery via AI is easy.
+		if ( in_array( $command_key, array( 'option update', 'option add' ), true )
+			&& class_exists( 'UWNext_White_Label' )
+			&& null !== self::match_option_name( $positional[0] ?? '', array( UWNext_White_Label::OPTION ) )
+			&& UWNext_White_Label::truthy( $positional[1] ?? '' ) ) {
+			return array(
+				'operation' => 'white_label_enable',
+				'reason'    => __( 'Hides every UWNext surface in this WordPress dashboard for ALL users: admin menu, dashboard widget, Plugins list entry, editor sidebar, and the Approval Log. The site stays fully manageable through AI, and WordPress auto-updates are switched on for the plugin so it stays current while hidden. It unhides automatically if the site is disconnected for 30 days.', 'unlimited-wp-mcp-next' ),
+				'dry_run'   => array(
+					'command' => 'wp option update ' . UWNext_White_Label::OPTION . ' 1',
+					'note'    => __( 'To undo later: set the option to 0 (no approval needed) or delete it via WP-CLI.', 'unlimited-wp-mcp-next' ),
+				),
+			);
+		}
+
+		// Builder-critical options (GATED_OPTIONS): update, add, and patch
+		// insert|update all gate — gating patch alone is bypassable via
+		// get-then-update. match_option_name (not in_array) so a padded or
+		// re-cased name that WP resolves to the real row cannot slip past.
+		// Deletes gate through the existing option delete / option patch delete
+		// / db query branches.
+		if ( in_array( $command_key, array( 'option update', 'option add' ), true )
+			&& null !== self::match_option_name( $positional[0] ?? '', self::GATED_OPTIONS ) ) {
+			return $this->classify_builder_option_write( $command_key, $positional, $flags );
+		}
+		if ( 'option patch' === $command_key
+			&& in_array( $positional[0] ?? '', array( 'insert', 'update' ), true )
+			&& null !== self::match_option_name( $positional[1] ?? '', self::GATED_OPTIONS ) ) {
+			return $this->classify_builder_option_patch( $positional, $flags );
+		}
+
+		// Options have no trash: deleting one permanently destroys whatever
+		// configuration lived in it. AI temp state (uwnext_task_*) and
+		// transient rows stay approval-free so the hygiene cleanup loop
+		// doesn't drown the user; one bypass approval covers option delete:*.
+		if ( 'option delete' === $command_key ) {
+			// Every key is examined, not just the first: the handler deletes them
+			// all, so exempting the list on $positional[0] would let an ordinary
+			// option ride along behind a leading uwnext_task_ key.
+			$gated = array();
+			foreach ( (array) $positional as $key ) {
+				$key = (string) $key;
+				// Deleting the white-label option UNhides the plugin — that's recovery, not destruction.
+				if ( '' === $key
+					|| 0 === strpos( $key, 'uwnext_task_' )
+					|| 0 === strpos( $key, '_transient_' )
+					|| 0 === strpos( $key, '_site_transient_' )
+					|| ( class_exists( 'UWNext_White_Label' ) && UWNext_White_Label::OPTION === $key ) ) {
+					continue;
+				}
+				// The handler refuses a protected key outright; minting an approval would only burn a click and put the value in the preview.
+				if ( null !== self::match_option_name( $key, self::BLOCKED_OPTIONS ) ) {
+					return null;
+				}
+				$gated[] = $key;
+			}
+			if ( empty( $gated ) ) {
+				return null;
+			}
+			if ( 1 === count( $gated ) ) {
+				return array(
+					'operation' => 'option delete:' . $gated[0],
+					'reason'    => __( 'Options are deleted permanently (WordPress has no trash for them), and a plugin\'s entire configuration can live in a single option. Review the value preview before approving.', 'unlimited-wp-mcp-next' ),
+					'dry_run'   => $this->build_option_delete_dry_run( $gated[0] ),
+				);
+			}
+			return array(
+				'operation' => 'option delete:bulk:' . implode( ',', $gated ),
+				/* translators: %d: number of options */
+				'reason'    => sprintf( __( 'Deletes %d options permanently (WordPress has no trash for them), and a plugin\'s entire configuration can live in a single option. Review each value preview before approving.', 'unlimited-wp-mcp-next' ), count( $gated ) ),
+				'dry_run'   => array(
+					'command' => 'wp option delete',
+					'count'   => count( $gated ),
+					'targets' => array_map( array( $this, 'build_option_delete_dry_run' ), $gated ),
+				),
+			);
+		}
+
+		// `option patch delete` unsets a subtree of an option in place, which is
+		// as permanent as deleting the option itself — same "options have no
+		// trash" rationale as the branch above. insert/update overwrite a leaf
+		// whose prior value the preview shows, so they stay approval-free.
+		if ( 'option patch' === $command_key && 'delete' === ( $positional[0] ?? '' ) ) {
+			$key  = $positional[1] ?? '';
+			$path = array_slice( $positional, 2 );
+			if ( '' === $key || empty( $path )
+				|| 0 === strpos( $key, 'uwnext_task_' )
+				|| 0 === strpos( $key, '_transient_' )
+				|| 0 === strpos( $key, '_site_transient_' )
+				|| null !== self::match_option_name( $key, self::BLOCKED_OPTIONS ) ) {
+				return null; // Handler returns a usage error or the protected refusal, or AI temp state.
+			}
+			return array(
+				'operation' => 'option patch delete:' . $key . ':' . implode( '.', $path ),
+				'reason'    => __( 'Removes a key from inside an option permanently. WordPress has no trash for options, and the surrounding option keeps its other keys, so the loss is easy to miss. Review the value preview before approving.', 'unlimited-wp-mcp-next' ),
+				'dry_run'   => $this->build_option_patch_delete_dry_run( $key, $path ),
+			);
+		}
+
+		// `--all` clears every transient including licensing tokens, refresh tokens and
+		// cached API responses, so it gates. `--expired` alone is the cleanup WordPress's own
+		// cron runs and our server instructions tell every AI to run, so it does not.
+		if ( 'transient delete' === $command_key && ! empty( $flags['all'] ) ) {
+			return array(
+				'operation' => 'transient_delete_all',
+				'reason'    => __( '--all wipes every transient on the site, including license tokens, refresh tokens, cached API responses, and any per-plugin state stored as a transient. Cannot be undone.', 'unlimited-wp-mcp-next' ),
+				'dry_run'   => array(
+					'command' => 'wp transient delete --all',
+					'note'    => __( 'Every wp_options row whose name starts with _transient_ is deleted. Site transients (_site_transient_ rows) are left untouched.', 'unlimited-wp-mcp-next' ),
+				),
+			);
+		}
+
+		// On `post meta delete`, --force means the opposite of what it means on
+		// `post delete`: it disables the is_protected_meta() rail rather than
+		// bypassing trash. Either way it removes a safety net, and post meta is
+		// not kept in revisions, so a builder's layout (_elementor_data et al)
+		// is unrecoverable. Without a value argument every row for the key goes.
+		// Only the all-rows wipe gates. A third positional names one exact value, so the
+		// caller already had to know what they were removing, and `post meta update`
+		// overwrites a value just as unrecoverably with no gate at all — prompting on the
+		// narrow form mostly teaches people to approve routine work, which is how a gate
+		// stops carrying signal. The handler's own is_protected_meta() rail is unchanged.
+		if ( ! empty( $flags['force'] ) && 'post meta delete' === $command_key && ! isset( $positional[2] ) ) {
+			$post_id = $positional[0] ?? '?';
+			$meta_key = $positional[1] ?? '?';
+			return array(
+				'operation' => 'post_meta_delete_force:' . $post_id . ':' . $meta_key,
+				/* translators: 1: meta key, 2: post ID */
+				'reason'    => sprintf( __( '--force overrides the protected-meta guard and deletes every \'%1$s\' row on post %2$s. Post meta is not stored in revisions, so page-builder layouts and template settings cannot be restored afterwards.', 'unlimited-wp-mcp-next' ), $meta_key, $post_id ),
+				'dry_run'   => $this->build_post_meta_delete_dry_run( $post_id, $meta_key, null ),
+			);
+		}
+
+		// --force flag bypassing trash (post delete --force, comment delete --force).
+		if ( $force_delete ) {
+			$target = $positional[0] ?? '?';
+			$noun   = $meta['bulk']['label'];
+			return array(
+				'operation' => $noun . '_delete_force:' . $target,
+				/* translators: %s: entity noun */
+				'reason'    => sprintf( __( '--force bypasses trash and permanently deletes content. The %s cannot be restored.', 'unlimited-wp-mcp-next' ), $noun ),
+				'dry_run'   => array(
+					'command'   => 'wp ' . $command_key . ' --force',
+					'target_id' => $target,
+					'target'    => $this->describe_target( $noun, $target ),
+					/* translators: %s: entity noun */
+					'note'      => sprintf( __( 'Without --force, the %s would move to trash and be restorable. With --force, it is permanently deleted.', 'unlimited-wp-mcp-next' ), $noun ),
+				),
+			);
+		}
+
+		return null;
+	}
+
+
+	/**
+	 * Drift-sensitive dry-run fields per operation prefix (issue #30). A
+	 * missing entry means NO check — search-replace and SQL previews are
+	 * volatile by design and must never be compared. Field names follow the
+	 * classify dry_run shape; a renamed field fails safe (reads as drifted).
+	 */
+	private function drift_sensitive_fields( $operation ) {
+		$map    = array(
+			'plugin_install_force' => array( 'installed_version', 'active' ),
+			// The approve-6.7.1-get-6.7.2 race --expect-version closes for
+			// plugins is closed here by the drift check instead.
+			'core_update'          => array( 'current_version', 'new_version' ),
+		);
+		$prefix = $this->operation_prefix( $operation );
+		return isset( $map[ $prefix ] ) ? $map[ $prefix ] : null;
+	}
+
+
+	private function operation_prefix( $operation ) {
+		$prefix = strstr( (string) $operation, ':', true );
+		return false === $prefix ? (string) $operation : $prefix;
+	}
+
+
+	private function drift_comparable( $value ) {
+		if ( is_bool( $value ) ) {
+			return $value ? '1' : '0';
+		}
+		return null === $value ? '' : (string) $value;
+	}
+
+	// Refusal text reaches the AI conversation; site-derived values (plugin
+	// Version headers) must stay identifier-shaped there.
+	private function drift_display( $value ) {
+		$value = $this->drift_comparable( $value );
+		return preg_match( '/^[A-Za-z0-9._?-]{0,40}$/', $value ) ? $value : '?';
+	}
+
+
+	/**
+	 * Compare the fresh classification against the approved snapshot the
+	 * Worker echoed back. Null = proceed; WP_Error = refuse, nothing ran.
+	 */
+	private function check_approved_state_drift( $destructive ) {
+		$approved = $this->approved_state;
+		if ( ! is_array( $approved ) || empty( $approved['operation'] ) ) {
+			return null;
+		}
+		$fields = $this->drift_sensitive_fields( $approved['operation'] );
+		if ( null === $fields ) {
+			return null;
+		}
+		$fresh_operation = is_array( $destructive ) && isset( $destructive['operation'] ) ? $destructive['operation'] : '';
+		if ( (string) $fresh_operation !== (string) $approved['operation'] ) {
+			// Declassified, reclassified, or aimed at a different target than
+			// the approval covered. Full-string compare so a snapshot for one
+			// slug can never validate an operation on another.
+			return new WP_Error(
+				'approval_state_drift',
+				__( 'Not run: the site changed after this operation was approved and it no longer matches what the user reviewed (for a force install, the plugin it would have replaced is no longer installed). Re-run the command to act on the site\'s current state.', 'unlimited-wp-mcp-next' ),
+				UWNext_Error_Contract::data( 'approval_flow', false, array( 'status' => 409 ) )
+			);
+		}
+		$approved_dry = isset( $approved['dry_run'] ) && is_array( $approved['dry_run'] ) ? $approved['dry_run'] : array();
+		$fresh_dry    = is_array( $destructive ) && isset( $destructive['dry_run'] ) && is_array( $destructive['dry_run'] ) ? $destructive['dry_run'] : array();
+		foreach ( $fields as $field ) {
+			$was = isset( $approved_dry[ $field ] ) ? $approved_dry[ $field ] : null;
+			$now = isset( $fresh_dry[ $field ] ) ? $fresh_dry[ $field ] : null;
+			if ( $this->drift_comparable( $was ) !== $this->drift_comparable( $now ) ) {
+				return new WP_Error(
+					'approval_state_drift',
+					sprintf(
+						/* translators: 1: field name, 2: value at approval, 3: value now */
+						__( 'Not run: the site changed after this operation was approved (%1$s was "%2$s" at approval, now "%3$s"). The approval covered exactly what the user reviewed, so nothing was executed. Re-run the command to generate a fresh approval for the current state.', 'unlimited-wp-mcp-next' ),
+						$field,
+						$this->drift_display( $was ),
+						$this->drift_display( $now )
+					),
+					UWNext_Error_Contract::data( 'approval_flow', false, array( 'status' => 409 ) )
+				);
+			}
+		}
+		return null;
+	}
+
+
+	private function reason_for_command( $command_key ) {
+		$reasons = array(
+			'user delete'       => __( 'User deletion removes the account permanently. Authored content references are fragile and reassignment requires manual care.', 'unlimited-wp-mcp-next' ),
+			'plugin uninstall'  => __( 'Plugin uninstall removes the plugin from the filesystem (different from deactivate). Plugin data and settings are typically lost.', 'unlimited-wp-mcp-next' ),
+			'cron event run'    => __( 'Runs the hook\'s scheduled callbacks immediately. Cron callbacks can do anything the owning plugin can do (send emails, hit APIs, modify data).', 'unlimited-wp-mcp-next' ),
+			'cron event delete' => __( 'Removes every scheduled instance of this hook. If the owning plugin depends on it, its background work silently stops until something reschedules it.', 'unlimited-wp-mcp-next' ),
+			'theme delete'      => __( 'Theme delete removes the theme from the filesystem. Any customizations inside the theme folder are lost.', 'unlimited-wp-mcp-next' ),
+			'cap add'           => __( 'Grants capabilities to every user with this role. Capabilities are the WordPress security boundary — review the literal grant below.', 'unlimited-wp-mcp-next' ),
+			'cap remove'        => __( 'Removes capabilities from every user with this role and can lock people out of workflows they rely on.', 'unlimited-wp-mcp-next' ),
+			'role create'       => __( 'Creates a new role definition. Cloned capabilities take effect for anyone later assigned this role.', 'unlimited-wp-mcp-next' ),
+			'role delete'       => __( 'Deletes the role definition. Users currently holding it are left with no role until reassigned.', 'unlimited-wp-mcp-next' ),
+			'role reset'        => __( 'Resets the role to its WordPress-default capabilities: custom grants are removed and removed defaults restored.', 'unlimited-wp-mcp-next' ),
+			'user add-cap'      => __( 'Grants a capability directly to one user, on top of what their role provides.', 'unlimited-wp-mcp-next' ),
+			'user remove-cap'   => __( 'Removes a capability granted directly to this user (role-derived capabilities are unaffected).', 'unlimited-wp-mcp-next' ),
+			'user create'       => __( 'Creates a new user with administrator-equivalent access. A new privileged account is a common prompt-injection takeover step, so review the login, email and role before approving.', 'unlimited-wp-mcp-next' ),
+			'user update'       => __( 'Changes a password, email address, or role in a way that affects account access: a password or email change can take over an account, and a role change can grant or remove administrator access. Review the change before approving.', 'unlimited-wp-mcp-next' ),
+			'user set-role'     => __( 'Changes a user\'s role in a way that grants or removes administrator-equivalent access. Review the target and role before approving.', 'unlimited-wp-mcp-next' ),
+			'user add-role'     => __( 'Adds an administrator-equivalent role to a user. Review the target and role before approving.', 'unlimited-wp-mcp-next' ),
+			'user remove-role'  => __( 'Removes administrator-equivalent access from a user. Review the target before approving.', 'unlimited-wp-mcp-next' ),
+		);
+		return $reasons[ $command_key ] ?? __( 'This operation is classified as destructive and requires explicit approval.', 'unlimited-wp-mcp-next' );
+	}
+
+
+	private function build_dry_run( $command_key, $positional, $flags ) {
+		if ( 'user delete' === $command_key ) {
+			// Must resolve identically to the execution path (id|login|email via
+			// resolve_user), or the preview says "will fail" and then deletes.
+			$user = ! empty( $positional[0] ) ? $this->resolve_user( $positional[0] ) : null;
+			if ( ! $user ) {
+				return array( 'target' => $positional[0] ?? '?', 'note' => __( 'User not found — execution will fail.', 'unlimited-wp-mcp-next' ) );
+			}
+			$post_count = (int) count_user_posts( $user->ID );
+			return array(
+				'target'         => $user->user_login,
+				'user_id'        => $user->ID,
+				'email'          => $user->user_email,
+				'roles'          => $user->roles,
+				'authored_posts' => $post_count,
+				'reassign_to'    => $flags['reassign'] ?? null,
+			);
+		}
+		if ( 'plugin uninstall' === $command_key ) {
+			$slug = $positional[0] ?? '?';
+			$file = $this->resolve_plugin_file( $slug );
+			if ( ! function_exists( 'get_plugins' ) ) {
+				require_once ABSPATH . 'wp-admin/includes/plugin.php';
+			}
+			$all = get_plugins();
+			if ( ! $file || ! isset( $all[ $file ] ) ) {
+				return array( 'target' => $slug, 'note' => __( 'Plugin not found — execution will fail.', 'unlimited-wp-mcp-next' ) );
+			}
+			return array(
+				'target'   => $slug,
+				'name'     => $all[ $file ]['Name'],
+				'version'  => $all[ $file ]['Version'],
+				'active'   => is_plugin_active( $file ),
+				'file'     => $file,
+			);
+		}
+		if ( 'cron event run' === $command_key || 'cron event delete' === $command_key ) {
+			return $this->describe_target( 'cron_hook', $positional[0] ?? '?' );
+		}
+		if ( 'theme delete' === $command_key ) {
+			return $this->describe_target( 'theme', $positional[0] ?? '?' );
+		}
+		if ( in_array( $command_key, array( 'cap add', 'cap remove', 'role create', 'role delete', 'role reset', 'user add-cap', 'user remove-cap' ), true ) ) {
+			return $this->build_role_cap_dry_run( $command_key, $positional, $flags );
+		}
+		return array( 'command' => $command_key, 'positional' => $positional, 'flags' => $flags );
+	}
+
+
+	/** Approval preview for role/capability edits: the literal grant, spelled out. */
+	private function build_role_cap_dry_run( $command_key, $positional, $flags ) {
+		$dry = array( 'command' => 'wp ' . $command_key );
+
+		if ( 'cap add' === $command_key || 'cap remove' === $command_key ) {
+			$role = $positional[0] ?? '?';
+			$caps = array_slice( $positional, 1 );
+			$dry['role']         = $role;
+			$dry['capabilities'] = $caps;
+			$dry['summary']      = 'cap add' === $command_key
+				/* translators: 1: capability list, 2: role */
+				? sprintf( __( 'Add %1$s to role `%2$s`.', 'unlimited-wp-mcp-next' ), '`' . implode( '`, `', $caps ) . '`', $role )
+				/* translators: 1: capability list, 2: role */
+				: sprintf( __( 'Remove %1$s from role `%2$s`.', 'unlimited-wp-mcp-next' ), '`' . implode( '`, `', $caps ) . '`', $role );
+			$high = array_values( array_intersect( $caps, self::HIGH_RISK_CAPS ) );
+			if ( $high && 'cap add' === $command_key ) {
+				$dry['high_risk_capabilities'] = $high;
+				/* translators: %s: capability list */
+				$dry['warning'] = sprintf( __( '%s grant administrator-equivalent power. A user with these capabilities can take over the site.', 'unlimited-wp-mcp-next' ), '`' . implode( '`, `', $high ) . '`' );
+			}
+			if ( 'cap remove' === $command_key && 'administrator' === $role && array_intersect( $caps, self::CORE_ADMIN_CAPS ) ) {
+				$dry['warning'] = __( 'Removing core capabilities from the administrator role is refused at execution (lockout protection).', 'unlimited-wp-mcp-next' );
+			}
+			return $dry;
+		}
+
+		if ( 'role create' === $command_key ) {
+			$dry['role_key']  = $positional[0] ?? '?';
+			$dry['role_name'] = $positional[1] ?? '';
+			if ( ! empty( $flags['clone'] ) ) {
+				$dry['clone_from'] = $flags['clone'];
+				$src               = get_role( $flags['clone'] );
+				$dry['cloned_capability_count'] = $src ? count( array_filter( $src->capabilities ) ) : null;
+			}
+			/* translators: %s: role key */
+			$dry['summary'] = sprintf( __( 'Create role `%s`.', 'unlimited-wp-mcp-next' ), $dry['role_key'] );
+			return $dry;
+		}
+
+		if ( 'role delete' === $command_key || 'role reset' === $command_key ) {
+			$targets = ! empty( $flags['all'] ) && 'role reset' === $command_key ? self::DEFAULT_ROLES : $positional;
+			$dry['roles'] = array();
+			foreach ( $targets as $role_key ) {
+				$role_obj = get_role( $role_key );
+				$entry    = array( 'role' => $role_key, 'exists' => (bool) $role_obj );
+				if ( $role_obj ) {
+					$entry['capability_count'] = count( array_filter( $role_obj->capabilities ) );
+					$users                     = count_users();
+					$entry['user_count']       = isset( $users['avail_roles'][ $role_key ] ) ? (int) $users['avail_roles'][ $role_key ] : 0;
+				}
+				$dry['roles'][] = $entry;
+			}
+			if ( 'role delete' === $command_key && in_array( 'administrator', $targets, true ) ) {
+				$dry['warning'] = __( 'Deleting the administrator role is refused at execution (lockout protection).', 'unlimited-wp-mcp-next' );
+			}
+			if ( 'role delete' === $command_key ) {
+				$dry['note'] = __( 'Users holding a deleted role are left with no role until reassigned.', 'unlimited-wp-mcp-next' );
+			}
+			return $dry;
+		}
+
+		// user add-cap / user remove-cap
+		$dry = array_merge( $dry, $this->describe_target( 'user', $positional[0] ?? '?' ) );
+		$cap = $positional[1] ?? '?';
+		$dry['capability'] = $cap;
+		$dry['summary']    = 'user add-cap' === $command_key
+			/* translators: 1: capability, 2: user */
+			? sprintf( __( 'Grant `%1$s` directly to user `%2$s`.', 'unlimited-wp-mcp-next' ), $cap, $positional[0] ?? '?' )
+			/* translators: 1: capability, 2: user */
+			: sprintf( __( 'Remove the direct `%1$s` grant from user `%2$s`.', 'unlimited-wp-mcp-next' ), $cap, $positional[0] ?? '?' );
+		if ( 'user add-cap' === $command_key && in_array( $cap, self::HIGH_RISK_CAPS, true ) ) {
+			$dry['high_risk_capabilities'] = array( $cap );
+			/* translators: %s: capability */
+			$dry['warning'] = sprintf( __( '`%s` grants administrator-equivalent power.', 'unlimited-wp-mcp-next' ), $cap );
+		}
+		return $dry;
+	}
+
+
+	/**
+	 * Approval decision for the user account/role write verbs. Returns null to
+	 * auto-execute, or {operation, reason, dry_run}. Gates on a CHANGE in the
+	 * target's administrator-equivalence (elevation OR demotion), plus any
+	 * password/email change on update. Operation keys use the resolved user ID
+	 * and a non-sensitive field signature — never the password value.
+	 */
+	private function classify_user_write( $command_key, $positional, $flags ) {
+		// A value-required flag in the bare space form (`--user_pass hunter2`)
+		// leaves its value as a stray positional; building an operation/dry-run
+		// here would embed that cleartext password in the pending op, approval
+		// page, and audit log. Skip gating: every handler refuses the bare form
+		// (require_flag_value / reject_unknown_flags) before any write runs.
+		foreach ( array( 'user_pass', 'user_email', 'role' ) as $vf ) {
+			if ( isset( $flags[ $vf ] ) && true === $flags[ $vf ] ) {
+				return null;
+			}
+		}
+		if ( 'user create' === $command_key ) {
+			$role = ( isset( $flags['role'] ) && true !== $flags['role'] && '' !== (string) $flags['role'] ) ? (string) $flags['role'] : (string) get_option( 'default_role' );
+			if ( ! $this->role_is_admin_equivalent( $role ) ) {
+				return null;
+			}
+			$login = isset( $positional[0] ) ? (string) $positional[0] : '?';
+			return array(
+				'operation' => 'user create:' . $login . ':role=' . $role,
+				'reason'    => $this->reason_for_command( 'user create' ),
+				'dry_run'   => $this->build_user_write_dry_run( 'user create', $positional, $flags, null, $role ),
+			);
+		}
+
+		$user = ! empty( $positional[0] ) ? $this->resolve_user( $positional[0] ) : null;
+
+		if ( 'user update' === $command_key ) {
+			$triggers = array();
+			if ( isset( $flags['user_pass'] ) ) {
+				$triggers[] = 'pass';
+			}
+			if ( isset( $flags['user_email'] ) ) {
+				$triggers[] = 'email';
+			}
+			$role = ( isset( $flags['role'] ) && true !== $flags['role'] ) ? (string) $flags['role'] : null;
+			if ( null !== $role ) {
+				// Every positional target gets --role applied, so the gate must
+				// inspect EACH one: gating only on $positional[0] lets a role
+				// change to a later target ride in unapproved. Gate if the change
+				// flips admin-equivalence for any target (elevation OR demotion),
+				// or if a target can't be resolved and the role is admin-grade
+				// (fail safe).
+				$will = $this->role_is_admin_equivalent( $role );
+				foreach ( $positional as $ident ) {
+					$u   = $this->resolve_user( $ident );
+					$was = $u ? $this->roles_include_admin_equivalent( (array) $u->roles ) : false;
+					if ( ! $u ? $will : ( $was !== $will ) ) {
+						$triggers[] = 'role=' . $role;
+						break;
+					}
+				}
+			}
+			if ( empty( $triggers ) ) {
+				return null;
+			}
+			sort( $triggers );
+			$ids = array();
+			foreach ( $positional as $ident ) {
+				$u     = $this->resolve_user( $ident );
+				$ids[] = $u ? (int) $u->ID : (string) $ident;
+			}
+			return array(
+				'operation' => 'user update:' . implode( ',', $ids ) . ':' . implode( ';', $triggers ),
+				'reason'    => $this->reason_for_command( 'user update' ),
+				'dry_run'   => $this->build_user_write_dry_run( 'user update', $positional, $flags, $user, $role ),
+			);
+		}
+
+		if ( 'user set-role' === $command_key ) {
+			$role = ( isset( $positional[1] ) && '' !== (string) $positional[1] ) ? (string) $positional[1] : (string) get_option( 'default_role' );
+			$was  = $user ? $this->roles_include_admin_equivalent( (array) $user->roles ) : false;
+			$will = $this->role_is_admin_equivalent( $role );
+			if ( $was === $will ) {
+				return null;
+			}
+			$target = $user ? (int) $user->ID : (string) $positional[0];
+			return array(
+				'operation' => 'user set-role:' . $target . ':' . $role,
+				'reason'    => $this->reason_for_command( 'user set-role' ),
+				'dry_run'   => $this->build_user_write_dry_run( 'user set-role', $positional, $flags, $user, $role ),
+			);
+		}
+
+		if ( 'user add-role' === $command_key ) {
+			$roles = array_slice( $positional, 1 );
+			if ( ! $this->roles_include_admin_equivalent( $roles ) ) {
+				return null;
+			}
+			$target = $user ? (int) $user->ID : (string) $positional[0];
+			return array(
+				'operation' => 'user add-role:' . $target . ':' . implode( ',', $roles ),
+				'reason'    => $this->reason_for_command( 'user add-role' ),
+				'dry_run'   => $this->build_user_write_dry_run( 'user add-role', $positional, $flags, $user, implode( ',', $roles ) ),
+			);
+		}
+
+		if ( 'user remove-role' === $command_key ) {
+			$roles     = array_slice( $positional, 1 );
+			$remaining = $user ? array_values( array_diff( (array) $user->roles, $roles ) ) : array();
+			$was       = $user ? $this->roles_include_admin_equivalent( (array) $user->roles ) : false;
+			$will      = $this->roles_include_admin_equivalent( $remaining );
+			if ( ! $was || $will ) {
+				return null;
+			}
+			$target = $user ? (int) $user->ID : (string) $positional[0];
+			return array(
+				'operation' => 'user remove-role:' . $target . ':' . implode( ',', $roles ),
+				'reason'    => $this->reason_for_command( 'user remove-role' ),
+				'dry_run'   => $this->build_user_write_dry_run( 'user remove-role', $positional, $flags, $user, implode( ',', $roles ) ),
+			);
+		}
+
+		return null;
+	}
+
+
+	/** Approval preview for a user write. Passwords are never echoed; roles/emails are shown for review. */
+	private function build_user_write_dry_run( $command_key, $positional, $flags, $user, $role ) {
+		$dry = array( 'command' => 'wp ' . $command_key );
+		// Multi-target update: enumerate every affected user so the approval shows
+		// the full set the command applies --role/password/email to, not just the first.
+		if ( 'user update' === $command_key && count( $positional ) > 1 ) {
+			$dry['targets'] = array();
+			foreach ( $positional as $ident ) {
+				$u = $this->resolve_user( $ident );
+				$dry['targets'][] = $u
+					? array( 'user' => $u->user_login, 'user_id' => (int) $u->ID, 'current_roles' => array_values( (array) $u->roles ) )
+					: array( 'user' => (string) $ident, 'note' => __( 'not found; execution will report it', 'unlimited-wp-mcp-next' ) );
+			}
+		} elseif ( $user ) {
+			$dry['user']          = $user->user_login;
+			$dry['user_id']       = (int) $user->ID;
+			$dry['current_roles'] = array_values( (array) $user->roles );
+		} elseif ( 'user create' === $command_key ) {
+			$dry['user']  = isset( $positional[0] ) ? (string) $positional[0] : '?';
+			$dry['email'] = isset( $positional[1] ) ? (string) $positional[1] : '?';
+		} else {
+			$dry['user'] = isset( $positional[0] ) ? (string) $positional[0] : '?';
+			$dry['note'] = __( 'User not found; execution will fail.', 'unlimited-wp-mcp-next' );
+		}
+
+		if ( isset( $flags['user_pass'] ) ) {
+			$dry['password_change'] = true;
+			$dry['password']        = __( '(hidden; not shown in the approval)', 'unlimited-wp-mcp-next' );
+		}
+		if ( isset( $flags['user_email'] ) ) {
+			$dry['email_change_to'] = (string) $flags['user_email'];
+			if ( $user ) {
+				$dry['email_change_from'] = $user->user_email;
+			}
+		}
+		if ( null !== $role && '' !== (string) $role ) {
+			$verb = ( 'user remove-role' === $command_key ) ? 'remove' : 'to';
+			$dry[ 'remove' === $verb ? 'roles_removed' : 'role_to' ] = (string) $role;
+			$high = array();
+			foreach ( explode( ',', (string) $role ) as $r ) {
+				$high = array_merge( $high, $this->role_high_risk_caps( trim( $r ) ) );
+			}
+			$high = array_values( array_unique( $high ) );
+			if ( $high && 'user remove-role' !== $command_key ) {
+				$dry['high_risk_capabilities'] = $high;
+				/* translators: %s: capability list */
+				$dry['warning'] = sprintf( __( 'This role grants administrator-equivalent power (%s). A user with it can take over the site.', 'unlimited-wp-mcp-next' ), implode( ', ', $high ) );
+			} elseif ( $user && $this->roles_include_admin_equivalent( (array) $user->roles ) ) {
+				$dry['warning'] = __( 'This removes administrator-equivalent access from an existing admin account. Execution refuses if it would strip the connected account or the last user holding the built-in administrator role. If the site\'s only admins use a custom admin-capable role instead, that last-admin check does not see them, so approving this can leave the site with no administrator; confirm another administrator remains before approving.', 'unlimited-wp-mcp-next' );
+			}
+		}
+		return $dry;
+	}
+
+
+	/**
+	 * Build the enumerated preview for a bulk op. Generic across target types
+	 * (post / user / plugin); the per-target labeling lives in describe_target.
+	 * Capped so a 5,000-id bulk doesn't produce a 5,000-row preview.
+	 */
+	private function build_bulk_dry_run( $command_key, $bulk_meta, $targets, $flags ) {
+		$type = isset( $bulk_meta['label'] ) ? $bulk_meta['label'] : 'item';
+		$cap  = 100;
+		$enum = array();
+		foreach ( array_slice( $targets, 0, $cap ) as $t ) {
+			$enum[] = $this->describe_target( $type, $t );
+		}
+
+		$dry = array(
+			'command'           => 'wp ' . $command_key . ( ! empty( $flags['force'] ) ? ' --force' : '' ),
+			'count'             => count( $targets ),
+			'targets'           => $enum,
+			'targets_truncated' => count( $targets ) > $cap,
+		);
+
+		if ( 'post delete' === $command_key || 'comment delete' === $command_key ) {
+			$dry['note'] = ! empty( $flags['force'] )
+				/* translators: %s: plural noun */
+				? sprintf( __( '--force permanently deletes these %s (no trash, not restorable).', 'unlimited-wp-mcp-next' ), $type . 's' )
+				/* translators: %s: capitalized plural noun */
+				: sprintf( __( '%s move to trash and remain restorable.', 'unlimited-wp-mcp-next' ), ucfirst( $type ) . 's' );
+		} elseif ( 'post update' === $command_key ) {
+			$changes = array();
+			foreach ( array( 'post_title', 'post_content', 'post_status', 'post_excerpt', 'post_name', 'post_parent', 'menu_order', 'comment_status', 'post_type' ) as $field ) {
+				if ( isset( $flags[ $field ] ) ) {
+					$changes[ $field ] = $flags[ $field ];
+				}
+			}
+			$dry['changes'] = $changes;
+		} elseif ( 'user delete' === $command_key && ! empty( $flags['reassign'] ) ) {
+			$dry['reassign_to'] = $flags['reassign'];
+		}
+
+		return $dry;
+	}
+
+
+	/** Resolve a single bulk target to a human-reviewable descriptor by type. */
+	private function describe_target( $type, $t ) {
+		switch ( $type ) {
+			case 'post':
+				$post = get_post( (int) $t );
+				return $post
+					? array( 'id' => (int) $t, 'title' => get_the_title( $post ), 'type' => $post->post_type, 'status' => $post->post_status )
+					: array( 'id' => (int) $t, 'note' => __( 'not found', 'unlimited-wp-mcp-next' ) );
+			case 'comment':
+				$comment = get_comment( (int) $t );
+				if ( ! $comment ) {
+					return array( 'id' => (int) $t, 'note' => __( 'not found', 'unlimited-wp-mcp-next' ) );
+				}
+				$excerpt = trim( wp_strip_all_tags( (string) $comment->comment_content ) );
+				return array(
+					'id'      => (int) $t,
+					'author'  => (string) $comment->comment_author,
+					'excerpt' => strlen( $excerpt ) > 80 ? mb_substr( $excerpt, 0, 80 ) . '...' : $excerpt,
+					'status'  => wp_get_comment_status( $comment ),
+					'post_id' => (int) $comment->comment_post_ID,
+				);
+			case 'user':
+				$user = is_numeric( $t )
+					? get_user_by( 'id', (int) $t )
+					: ( is_email( $t ) ? get_user_by( 'email', $t ) : get_user_by( 'login', $t ) );
+				return $user
+					? array( 'target' => $user->user_login, 'id' => (int) $user->ID, 'email' => $user->user_email, 'roles' => $user->roles, 'authored_posts' => (int) count_user_posts( $user->ID ) )
+					: array( 'target' => $t, 'note' => __( 'not found', 'unlimited-wp-mcp-next' ) );
+			case 'plugin':
+				$file = $this->resolve_plugin_file( $t );
+				if ( ! function_exists( 'get_plugins' ) ) {
+					require_once ABSPATH . 'wp-admin/includes/plugin.php';
+				}
+				$all = get_plugins();
+				return ( $file && isset( $all[ $file ] ) )
+					? array( 'target' => $t, 'name' => $all[ $file ]['Name'], 'version' => $all[ $file ]['Version'], 'active' => is_plugin_active( $file ) )
+					: array( 'target' => $t, 'note' => __( 'not found', 'unlimited-wp-mcp-next' ) );
+			case 'cron_hook':
+				$instances = 0;
+				$next      = null;
+				$crons     = function_exists( '_get_cron_array' ) ? _get_cron_array() : array();
+				foreach ( (array) $crons as $timestamp => $hooks ) {
+					if ( isset( $hooks[ $t ] ) ) {
+						$instances += count( $hooks[ $t ] );
+						if ( null === $next ) {
+							$next = gmdate( 'Y-m-d H:i:s', (int) $timestamp );
+						}
+					}
+				}
+				return $instances > 0
+					? array( 'target' => $t, 'scheduled_instances' => $instances, 'next_run' => $next )
+					: array( 'target' => $t, 'note' => __( 'no scheduled events for this hook', 'unlimited-wp-mcp-next' ) );
+			case 'theme':
+				$theme = wp_get_theme( $t );
+				if ( ! $theme->exists() ) {
+					return array( 'target' => $t, 'note' => __( 'not found', 'unlimited-wp-mcp-next' ) );
+				}
+				$desc = array( 'target' => $t, 'name' => $theme->get( 'Name' ), 'version' => $theme->get( 'Version' ), 'active' => ( get_stylesheet() === $t ) );
+				if ( ! $desc['active'] && get_template() === $t ) {
+					$desc['note'] = __( 'PARENT of the active child theme — deleting it breaks the site. Execution will refuse.', 'unlimited-wp-mcp-next' );
+				}
+				return $desc;
+			default:
+				return array( 'target' => $t );
+		}
+	}
+
+
+	/** Approval preview for option delete: what's in it, how big, and whether execution will refuse anyway. */
+	private function build_option_delete_dry_run( $key ) {
+		$dry   = array( 'command' => 'wp option delete', 'option' => $key );
+		$value = get_option( $key, null );
+		if ( null === $value ) {
+			$dry['note'] = __( 'Option not found, so execution will fail.', 'unlimited-wp-mcp-next' );
+			return $dry;
+		}
+		$str                     = is_scalar( $value ) ? (string) $value : (string) wp_json_encode( $value );
+		$dry['value_type']       = strtolower( gettype( $value ) );
+		$dry['value_size_chars'] = mb_strlen( $str );
+		$dry['value_preview']    = mb_substr( $str, 0, 200 ) . ( strlen( $str ) > 200 ? '… [truncated]' : '' );
+		if ( null !== self::match_option_name( $key, self::BLOCKED_OPTIONS ) ) {
+			$dry['warning'] = __( 'This option is permanently protected by UWNext; execution will refuse even after approval.', 'unlimited-wp-mcp-next' );
+		}
+		return $dry;
+	}
+
+
+	/**
+	 * Approval preview for one term delete target. Resolves via the SAME
+	 * resolve_term()/is_default_term() the handler uses, so the preview can
+	 * never describe a different term than the one that gets deleted.
+	 */
+	private function build_term_delete_target_preview( $taxonomy, $ident, $flags ) {
+		$dry  = array( 'taxonomy' => $taxonomy, 'target' => $ident );
+		$term = $this->resolve_term( $taxonomy, $ident, $flags );
+		if ( is_array( $term ) && isset( $term['exit_code'] ) ) {
+			/* translators: %s: the refusal the handler will produce */
+			$dry['note'] = sprintf( __( 'Execution will refuse this target: %s', 'unlimited-wp-mcp-next' ), $term['stderr'] );
+			return $dry;
+		}
+		if ( ! $term ) {
+			$dry['note'] = __( 'Term not found; execution will report it as already deleted.', 'unlimited-wp-mcp-next' );
+			return $dry;
+		}
+		if ( $this->is_default_term( $taxonomy, (int) $term->term_id ) ) {
+			$dry['term_id'] = (int) $term->term_id;
+			$dry['name']    = (string) $term->name;
+			$dry['warning'] = __( 'This is the taxonomy\'s default term; execution will refuse it even after approval.', 'unlimited-wp-mcp-next' );
+			return $dry;
+		}
+		$dry['term_id']        = (int) $term->term_id;
+		$dry['name']           = (string) $term->name;
+		$dry['slug']           = (string) $term->slug;
+		$dry['attached_posts'] = isset( $term->count ) ? (int) $term->count : 0;
+		$children              = get_terms( array(
+			'taxonomy'   => $taxonomy,
+			'parent'     => (int) $term->term_id,
+			'hide_empty' => false,
+			'fields'     => 'ids',
+		) );
+		$dry['child_terms'] = is_array( $children ) ? count( $children ) : 0;
+		if ( $dry['child_terms'] > 0 ) {
+			$dry['note'] = __( 'Child terms will be reparented to this term\'s parent.', 'unlimited-wp-mcp-next' );
+		}
+		return $dry;
+	}
+
+
+	private function build_option_patch_delete_dry_run( $key, $path ) {
+		$dry     = array( 'command' => 'wp option patch delete', 'option' => $key, 'key_path' => implode( '.', $path ) );
+		$current = get_option( $key, null );
+		if ( null === $current ) {
+			$dry['note'] = __( 'Option not found, so execution will fail.', 'unlimited-wp-mcp-next' );
+			return $dry;
+		}
+		if ( ! is_array( $current ) && ! is_object( $current ) ) {
+			$dry['note'] = __( 'Option is not an array or object, so execution will fail.', 'unlimited-wp-mcp-next' );
+			return $dry;
+		}
+		// Walk to the leaf so the preview shows what this key path actually drops.
+		$node = $current;
+		foreach ( $path as $segment ) {
+			$seg = is_numeric( $segment ) ? (int) $segment : $segment;
+			if ( is_object( $node ) ) {
+				$node = isset( $node->$seg ) ? $node->$seg : null;
+			} elseif ( is_array( $node ) && array_key_exists( $seg, $node ) ) {
+				$node = $node[ $seg ];
+			} else {
+				$dry['note'] = __( 'Key path not found in this option, so execution will fail.', 'unlimited-wp-mcp-next' );
+				return $dry;
+			}
+			if ( null === $node ) {
+				$dry['note'] = __( 'Key path not found in this option, so execution will fail.', 'unlimited-wp-mcp-next' );
+				return $dry;
+			}
+		}
+		$str                     = is_scalar( $node ) ? (string) $node : (string) wp_json_encode( $node );
+		$dry['value_type']       = strtolower( gettype( $node ) );
+		$dry['value_size_chars'] = mb_strlen( $str );
+		$dry['value_preview']    = mb_substr( $str, 0, 200 ) . ( strlen( $str ) > 200 ? '… [truncated]' : '' );
+		if ( is_array( $node ) || is_object( $node ) ) {
+			$dry['warning'] = __( 'This key path holds a nested structure; deleting it removes everything beneath it.', 'unlimited-wp-mcp-next' );
+		}
+		if ( null !== self::match_option_name( $key, self::BLOCKED_OPTIONS ) ) {
+			$dry['warning'] = __( 'This option is permanently protected by UWNext; execution will refuse even after approval.', 'unlimited-wp-mcp-next' );
+		}
+		return $dry;
+	}
+
+
+	/**
+	 * Approval decision for `option update|add` on a GATED_OPTIONS key. Parses
+	 * the value exactly like the handler; anything the handler will refuse
+	 * outright (usage error, bad JSON, add-on-existing, type-shape flip) must
+	 * not burn an approval click first, so those return null.
+	 */
+	private function classify_builder_option_write( $command_key, $positional, $flags ) {
+		if ( count( $positional ) < 2 ) {
+			return null;
+		}
+		// Canonical name (trimmed, correct case) so the operation key, the
+		// preview read, and the write all target one identity.
+		$key = self::match_option_name( $positional[0], self::GATED_OPTIONS );
+		$parsed = $this->parse_option_value( $positional[1], $flags, $key );
+		if ( isset( $parsed['error'] ) ) {
+			return null;
+		}
+		$value    = $parsed['value'];
+		$existing = get_option( $key, null );
+		if ( 'option add' === $command_key && null !== $existing ) {
+			return null;
+		}
+		if ( 'option update' === $command_key && null !== $existing ) {
+			$existing_structured = is_array( $existing ) || is_object( $existing );
+			$new_structured      = is_array( $value ) || is_object( $value );
+			if ( $existing_structured !== $new_structured ) {
+				return null;
+			}
+		}
+		return array(
+			'operation' => 'builder_option_write:' . $key,
+			'reason'    => $this->builder_option_reason( $key ),
+			'dry_run'   => $this->build_builder_option_dry_run( $command_key, $key, $existing, $value ),
+		);
+	}
+
+
+	/**
+	 * Approval decision for `option patch insert|update` on a GATED_OPTIONS
+	 * key. Resolves the leaf via the SAME walk the handler uses so the preview
+	 * can never describe a different leaf than the one that gets written, and
+	 * returns null for anything the handler will refuse.
+	 */
+	private function classify_builder_option_patch( $positional, $flags ) {
+		$action = (string) $positional[0];
+		$key    = self::match_option_name( $positional[1], self::GATED_OPTIONS );
+		$rest   = array_slice( $positional, 2 );
+		if ( count( $rest ) < 2 ) {
+			return null;
+		}
+		$raw  = array_pop( $rest );
+		$path = $rest;
+		if ( $this->patch_value_is_json_text( $raw, $flags ) ) {
+			return null;
+		}
+		$parsed = $this->parse_option_value( $raw, $flags, $key );
+		if ( isset( $parsed['error'] ) ) {
+			return null;
+		}
+		$value   = $parsed['value'];
+		$current = get_option( $key, null );
+		if ( null === $current || ( ! is_array( $current ) && ! is_object( $current ) ) ) {
+			return null;
+		}
+		$leaf_found = false;
+		$leaf       = $this->option_leaf_at( $current, $path, $leaf_found );
+		if ( 'insert' === $action ) {
+			if ( $leaf_found ) {
+				return null;
+			}
+			if ( count( $path ) > 1 ) {
+				$parent_found = false;
+				$parent       = $this->option_leaf_at( $current, array_slice( $path, 0, -1 ), $parent_found );
+				if ( ! $parent_found || ( ! is_array( $parent ) && ! is_object( $parent ) ) ) {
+					return null;
+				}
+			}
+		} else {
+			if ( ! $leaf_found || $this->patch_leaf_shape_conflict( $leaf, $value ) ) {
+				return null;
+			}
+		}
+		$dry = array(
+			'command'  => 'wp option patch ' . $action . ' ' . $key . ' ' . implode( ' ', $path ),
+			'option'   => $key,
+			'key_path' => implode( '.', $path ),
+			'to'       => $this->leaf_value_preview( $value ),
+		);
+		if ( 'update' === $action ) {
+			$dry['from'] = $this->leaf_value_preview( $leaf );
+		} else {
+			$dry['note'] = __( 'New key: nothing exists at this key path yet.', 'unlimited-wp-mcp-next' );
+		}
+		return array(
+			'operation' => 'builder_option_write:' . $key . ':' . implode( '.', $path ),
+			'reason'    => $this->builder_option_reason( $key ),
+			'dry_run'   => $dry,
+		);
+	}
+
+
+	private function builder_option_reason( $key ) {
+		return sprintf(
+			/* translators: %s: option key */
+			__( 'The option \'%s\' holds a page builder\'s site-wide settings or global presets (Divi). A malformed value here breaks styling or locks the builder on every page at once, a direct write bypasses the builder\'s own validation and migration, and WordPress keeps no history for options. Review the exact changes below before approving; design changes are safer made in the builder\'s own settings UI.', 'unlimited-wp-mcp-next' ),
+			$key
+		);
+	}
+
+
+	/**
+	 * Approval preview for a gated option update/add: a leaf-level diff, not
+	 * two truncated blobs. JSON-text scalars diff decoded (Divi 5 stores the
+	 * D5 presets as a JSON string; a string-vs-string diff is unreadable).
+	 */
+	private function build_builder_option_dry_run( $command_key, $key, $existing, $value ) {
+		$dry = array(
+			'command' => 'wp ' . $command_key . ' ' . $key,
+			'option'  => $key,
+		);
+		if ( null === $existing ) {
+			$dry['note']      = __( 'This option does not exist yet; the write creates it.', 'unlimited-wp-mcp-next' );
+			$dry['new_value'] = $this->leaf_value_preview( $value, 500 );
+			return $dry;
+		}
+		$diff_old = $this->decode_json_text( $existing );
+		$diff_new = $this->decode_json_text( $value );
+		if ( ( is_array( $diff_old ) || is_object( $diff_old ) ) && ( is_array( $diff_new ) || is_object( $diff_new ) ) ) {
+			$changes = array();
+			$total   = 0;
+			$this->collect_leaf_diff( $diff_old, $diff_new, '', $changes, $total );
+			$dry['changed_leaves'] = $total;
+			$dry['changes']        = $changes;
+			if ( $total > count( $changes ) ) {
+				$dry['changes_truncated'] = true;
+			}
+			if ( 0 === $total ) {
+				$dry['note'] = __( 'No leaf-level differences found; this write would be a no-op.', 'unlimited-wp-mcp-next' );
+			} elseif ( is_string( $existing ) ) {
+				$dry['note'] = __( 'The option stores JSON text; the diff is computed on the decoded structure. The write stores the new text verbatim.', 'unlimited-wp-mcp-next' );
+			}
+			return $dry;
+		}
+		$dry['from'] = $this->leaf_value_preview( $existing );
+		$dry['to']   = $this->leaf_value_preview( $value );
+		return $dry;
+	}
+
+
+	/** Decode a JSON-object/array string for diffing; anything else passes through. */
+	private function decode_json_text( $value ) {
+		if ( ! is_string( $value ) ) {
+			return $value;
+		}
+		$trimmed = trim( $value );
+		if ( '' === $trimmed || ( '{' !== $trimmed[0] && '[' !== $trimmed[0] ) ) {
+			return $value;
+		}
+		$decoded = json_decode( $trimmed, true );
+		return is_array( $decoded ) ? $decoded : $value;
+	}
+
+
+	/**
+	 * Recursive leaf diff between two structures. $total counts every changed
+	 * leaf; $changes carries at most 40 entries so a full-blob rewrite still
+	 * previews legibly. Depth-capped: deeper subtrees report as one change.
+	 */
+	private function collect_leaf_diff( $old, $new, $path, &$changes, &$total, $depth = 0 ) {
+		$old = is_object( $old ) ? get_object_vars( $old ) : $old;
+		$new = is_object( $new ) ? get_object_vars( $new ) : $new;
+		if ( is_array( $old ) && is_array( $new ) ) {
+			if ( $depth >= 8 ) {
+				if ( wp_json_encode( $old ) !== wp_json_encode( $new ) ) {
+					$total++;
+					if ( count( $changes ) < 40 ) {
+						$changes[] = array( 'path' => $path, 'change' => 'changed', 'note' => __( 'nested structure beyond preview depth', 'unlimited-wp-mcp-next' ) );
+					}
+				}
+				return;
+			}
+			foreach ( array_keys( $old + $new ) as $k ) {
+				$p      = '' === $path ? (string) $k : $path . '.' . $k;
+				$in_old = array_key_exists( $k, $old );
+				$in_new = array_key_exists( $k, $new );
+				if ( $in_old && ! $in_new ) {
+					$total++;
+					if ( count( $changes ) < 40 ) {
+						$changes[] = array( 'path' => $p, 'change' => 'removed', 'from' => $this->leaf_value_preview( $old[ $k ] ) );
+					}
+				} elseif ( ! $in_old && $in_new ) {
+					$total++;
+					if ( count( $changes ) < 40 ) {
+						$changes[] = array( 'path' => $p, 'change' => 'added', 'to' => $this->leaf_value_preview( $new[ $k ] ) );
+					}
+				} else {
+					$this->collect_leaf_diff( $old[ $k ], $new[ $k ], $p, $changes, $total, $depth + 1 );
+				}
+			}
+			return;
+		}
+		if ( $old !== $new ) {
+			$total++;
+			if ( count( $changes ) < 40 ) {
+				$changes[] = array( 'path' => $path, 'change' => 'changed', 'from' => $this->leaf_value_preview( $old ), 'to' => $this->leaf_value_preview( $new ) );
+			}
+		}
+	}
+
+
+	/** Short human-readable preview of a single value for approval screens. */
+	private function leaf_value_preview( $value, $max = 100 ) {
+		if ( null === $value ) {
+			return 'null';
+		}
+		if ( is_bool( $value ) ) {
+			return $value ? 'true' : 'false';
+		}
+		$str = is_scalar( $value ) ? (string) $value : (string) wp_json_encode( $value );
+		if ( mb_strlen( $str ) > $max ) {
+			/* translators: %d: total character count of the truncated value */
+			return mb_substr( $str, 0, $max ) . sprintf( __( '... [truncated, %d chars total]', 'unlimited-wp-mcp-next' ), mb_strlen( $str ) );
+		}
+		return $str;
+	}
+
+
+	private function build_post_meta_delete_dry_run( $post_id, $meta_key, $value = null ) {
+		$dry = array(
+			'command'  => 'wp post meta delete --force',
+			'post_id'  => $post_id,
+			'meta_key' => $meta_key,
+			'note'     => null === $value
+				? __( 'No value argument: every row stored under this meta key is deleted.', 'unlimited-wp-mcp-next' )
+				: __( 'Value argument given: only rows matching that value are deleted.', 'unlimited-wp-mcp-next' ),
+		);
+		if ( is_protected_meta( $meta_key, 'post' ) ) {
+			$dry['protected'] = true;
+			$dry['warning']   = __( 'This is a protected/internal meta key. Without --force the command would refuse; --force overrides that guard.', 'unlimited-wp-mcp-next' );
+		}
+		$existing = get_post_meta( (int) $post_id, $meta_key, false );
+		if ( is_array( $existing ) ) {
+			$dry['row_count'] = count( $existing );
+			if ( ! empty( $existing ) ) {
+				$first                = $existing[0];
+				$str                  = is_scalar( $first ) ? (string) $first : (string) wp_json_encode( $first );
+				$dry['value_preview'] = mb_substr( $str, 0, 200 ) . ( strlen( $str ) > 200 ? '… [truncated]' : '' );
+			}
+		}
+		return $dry;
+	}
+
+
+	/**
+	 * Approval (or refusal) for a db query write. An identity/privilege target
+	 * is unapprovable: refused here so no human is handed an approve button the
+	 * executor would refuse anyway (and the preview never runs).
+	 */
+	private function classify_db_query_write( $sql, $keyword ) {
+		$operation  = 'db_query_' . strtolower( $keyword );
+		$privileged = $this->privileged_sql_target_error( $sql );
+		if ( $privileged ) {
+			return array(
+				'operation' => $operation,
+				'reason'    => (string) $privileged['stderr'],
+				'dry_run'   => null,
+				'refuse'    => $privileged,
+			);
+		}
+		// The `:sql` key is the only form the Worker lets a session approval cover.
+		if ( $this->sql_session_rememberable( $sql, $keyword ) ) {
+			$operation .= ':sql';
+		}
+		return array(
+			'operation' => $operation,
+			'reason'    => sprintf(
+				/* translators: %s: SQL keyword */
+				__( 'Mutating SQL (%s) bypasses all plugin safety. Direct DB writes need explicit approval.', 'unlimited-wp-mcp-next' ),
+				$keyword
+			),
+			'dry_run'   => $this->build_db_query_dry_run( $keyword, $sql, $this->normalize_sql_for_gate( $sql ) ),
+		);
+	}
+
+	private function build_db_query_dry_run( $keyword, $sql, $normalized ) {
+		global $wpdb;
+		// Resolve {prefix} placeholder so the regex parsers below can find the
+		// actual table name. handle_db_query does the same substitution at
+		// execute time; we mirror it here so the dry-run preview shows the
+		// row count + sample the user is about to mutate.
+		$sql = str_replace( '{prefix}', $wpdb->prefix, $sql );
+		$preview = array(
+			'sql'        => $sql,
+			'operation'  => $keyword,
+			'table_prefix' => $wpdb->prefix,
+		);
+
+		// The WHERE-remainder below is interpolated into preview SQL we execute
+		// here (pre-approval). Mirror handle_db_query's stacked-statement guard
+		// so a `; second statement` cannot ride in: since the quote-aware gate
+		// stopped blocking `;` inside quoted values, this builder can no longer
+		// rely on that flat backstop. A stacked statement skips the preview
+		// (execution still applies its own guard); it is not silently run.
+		if ( preg_match( '/;\s*\S/', $sql ) ) {
+			$preview['note'] = __( 'Affected-row preview skipped: the statement could not be safely parsed for preview.', 'unlimited-wp-mcp-next' );
+			return $preview;
+		}
+
+		// Cap counting at this many rows so we don't lock up sites with millions
+		// of rows. The subquery LIMIT bounds the scan; outer COUNT(*) returns
+		// at most $cap + 1, letting us show "$cap+" instead of a blocking count.
+		$cap = 1000;
+
+		// For DELETE/UPDATE we can count affected rows by translating the WHERE.
+		if ( 'DELETE' === $keyword && preg_match( '/^DELETE\s+FROM\s+([`\w]+)(.*)$/i', trim( $sql ), $m ) ) {
+			$table = trim( $m[1], '`' );
+			$rest  = trim( rtrim( $m[2], '; ' ) );
+			$count_sql = "SELECT COUNT(*) FROM (SELECT 1 FROM `{$table}` {$rest} LIMIT " . ( $cap + 1 ) . ") AS subq";
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$count = $wpdb->get_var( $count_sql ); // nosemgrep: direct-db-query
+			if ( null !== $count && empty( $wpdb->last_error ) ) {
+				$n = (int) $count;
+				$preview['affected_count'] = min( $n, $cap );
+				if ( $n > $cap ) {
+					$preview['affected_count_truncated'] = true;
+					/* translators: %d: row-count cap */
+					$preview['affected_count_note']      = sprintf( __( 'Count truncated at %d to avoid scanning very large tables; actual affected rows may be higher.', 'unlimited-wp-mcp-next' ), $cap );
+				}
+				$sample_sql = "SELECT * FROM `{$table}` {$rest} LIMIT 5";
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+				$sample = $wpdb->get_results( $sample_sql, ARRAY_A ); // nosemgrep: direct-db-query
+				if ( $sample && empty( $wpdb->last_error ) ) {
+					$preview['sample_rows'] = $this->trim_sample_rows( $sample );
+				}
+			} else {
+				$preview['note'] = __( 'Could not preview affected rows (SQL parse failure). Execution will attempt the literal DELETE.', 'unlimited-wp-mcp-next' );
+			}
+		}
+
+		if ( 'UPDATE' === $keyword && preg_match( '/^UPDATE\s+([`\w]+)\s+SET\s+.+?(\s+WHERE\s+.*)?$/is', trim( $sql ), $m ) ) {
+			$table = trim( $m[1], '`' );
+			$where = isset( $m[2] ) ? trim( rtrim( $m[2], '; ' ) ) : '';
+			$count_sql = "SELECT COUNT(*) FROM (SELECT 1 FROM `{$table}` {$where} LIMIT " . ( $cap + 1 ) . ") AS subq";
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$count = $wpdb->get_var( $count_sql ); // nosemgrep: direct-db-query
+			if ( null !== $count && empty( $wpdb->last_error ) ) {
+				$n = (int) $count;
+				$preview['affected_count'] = min( $n, $cap );
+				if ( $n > $cap ) {
+					$preview['affected_count_truncated'] = true;
+					/* translators: %d: row-count cap */
+					$preview['affected_count_note']      = sprintf( __( 'Count truncated at %d to avoid scanning very large tables; actual affected rows may be higher.', 'unlimited-wp-mcp-next' ), $cap );
+				}
+				// Show which rows will change (current values) so the approval is
+				// reviewable by content, not just by count — same as the DELETE branch.
+				$sample_sql = "SELECT * FROM `{$table}` {$where} LIMIT 5";
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+				$sample = $wpdb->get_results( $sample_sql, ARRAY_A ); // nosemgrep: direct-db-query
+				if ( $sample && empty( $wpdb->last_error ) ) {
+					$preview['sample_rows'] = $this->trim_sample_rows( $sample );
+				}
+			} else {
+				$preview['note'] = __( 'Could not preview affected rows (SQL parse failure). Execution will attempt the literal UPDATE.', 'unlimited-wp-mcp-next' );
+			}
+		}
+
+		return $preview;
+	}
+
+
+	/**
+	 * Truncate long string values in dry-run sample rows so a preview of a wide
+	 * table (e.g. wp_posts.post_content, wp_options.option_value) stays readable
+	 * instead of dumping full bodies. Table-agnostic: trims any string cell over
+	 * the cap, leaving short identifying columns (ID, title, status) intact.
+	 *
+	 * @param array $rows Rows from $wpdb->get_results( ..., ARRAY_A ).
+	 * @param int   $max  Max characters per string cell.
+	 * @return array
+	 */
+	private function trim_sample_rows( $rows, $max = 200 ) {
+		if ( ! is_array( $rows ) ) {
+			return $rows;
+		}
+		foreach ( $rows as &$row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			foreach ( $row as $key => $val ) {
+				if ( is_string( $val ) && mb_strlen( $val ) > $max ) {
+					/* translators: %d: total character count of the truncated value */
+					$row[ $key ] = mb_substr( $val, 0, $max ) . sprintf( __( '... [truncated, %d chars total]', 'unlimited-wp-mcp-next' ), mb_strlen( $val ) );
+				}
+			}
+		}
+		unset( $row );
+		return $rows;
+	}
+
+}

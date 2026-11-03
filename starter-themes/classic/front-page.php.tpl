@@ -12,20 +12,20 @@
 ?>
 <?php get_header(); ?>
 <?php
-$wpvibe_front_page_id = (int) get_option( 'page_on_front' );
-$wpvibe_hero_page_id  = ( $wpvibe_front_page_id && 'page' === get_post_type( $wpvibe_front_page_id ) ) ? $wpvibe_front_page_id : 0;
-$wpvibe_hero_heading  = $wpvibe_hero_page_id ? get_post_meta( $wpvibe_hero_page_id, 'hero_heading', true ) : '';
-$wpvibe_hero_subhead  = $wpvibe_hero_page_id ? get_post_meta( $wpvibe_hero_page_id, 'hero_subheading', true ) : '';
+$uwnext_front_page_id = (int) get_option( 'page_on_front' );
+$uwnext_hero_page_id  = ( $uwnext_front_page_id && 'page' === get_post_type( $uwnext_front_page_id ) ) ? $uwnext_front_page_id : 0;
+$uwnext_hero_heading  = $uwnext_hero_page_id ? get_post_meta( $uwnext_hero_page_id, 'hero_heading', true ) : '';
+$uwnext_hero_subhead  = $uwnext_hero_page_id ? get_post_meta( $uwnext_hero_page_id, 'hero_subheading', true ) : '';
 ?>
 
 <main class="flex-1">
 	<section class="bg-gradient-to-br from-primary-50 to-background py-20">
 		<div class="max-w-4xl mx-auto px-6 text-center">
-			<h1 class="text-5xl font-bold tracking-tight text-neutral" <?php $wpvibe_hero_page_id && function_exists( 'wpvibe_edit_attr' ) && wpvibe_edit_attr( $wpvibe_hero_page_id, 'hero_heading' ); ?>>
-				<?php echo esc_html( $wpvibe_hero_heading ?: 'Welcome to {{THEME_NAME_PHP}}.' ); ?>
+			<h1 class="text-5xl font-bold tracking-tight text-neutral" <?php $uwnext_hero_page_id && function_exists( 'uwnext_edit_attr' ) && uwnext_edit_attr( $uwnext_hero_page_id, 'hero_heading' ); ?>>
+				<?php echo esc_html( $uwnext_hero_heading ?: 'Welcome to {{THEME_NAME_PHP}}.' ); ?>
 			</h1>
-			<p class="mt-4 text-xl text-secondary-600 max-w-2xl mx-auto" <?php $wpvibe_hero_page_id && function_exists( 'wpvibe_edit_attr' ) && wpvibe_edit_attr( $wpvibe_hero_page_id, 'hero_subheading' ); ?>>
-				<?php echo esc_html( $wpvibe_hero_subhead ?: 'A fresh WordPress theme ready for your content.' ); ?>
+			<p class="mt-4 text-xl text-secondary-600 max-w-2xl mx-auto" <?php $uwnext_hero_page_id && function_exists( 'uwnext_edit_attr' ) && uwnext_edit_attr( $uwnext_hero_page_id, 'hero_subheading' ); ?>>
+				<?php echo esc_html( $uwnext_hero_subhead ?: 'A fresh WordPress theme ready for your content.' ); ?>
 			</p>
 		</div>
 	</section>

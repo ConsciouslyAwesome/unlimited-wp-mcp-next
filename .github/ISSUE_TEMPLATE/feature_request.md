@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for the WPVibe plugin (Vibe AI on WordPress.org)
+about: Suggest an idea for the UWNext plugin (Vibe AI on WordPress.org)
 title: '[Feature] '
 labels: enhancement
 ---

@@ -8,12 +8,12 @@
 <main class="flex-1">
 	<header class="max-w-4xl mx-auto px-6 pt-16 pb-8 border-b border-secondary-200">
 		<p class="text-sm uppercase tracking-wider text-secondary-600">
-			<?php esc_html_e( 'Search results', 'vibe-ai' ); ?>
+			<?php esc_html_e( 'Search results', 'unlimited-wp-mcp-next' ); ?>
 		</p>
 		<h1 class="mt-2 text-3xl md:text-4xl font-bold tracking-tight text-neutral">
 			<?php
 			/* translators: %s: search query */
-			printf( esc_html__( 'Results for "%s"', 'vibe-ai' ), '<em class="not-italic">' . esc_html( get_search_query() ) . '</em>' );
+			printf( esc_html__( 'Results for "%s"', 'unlimited-wp-mcp-next' ), '<em class="not-italic">' . esc_html( get_search_query() ) . '</em>' );
 			?>
 		</h1>
 		<div class="mt-6 max-w-md">
@@ -39,12 +39,12 @@
 			</div>
 
 			<nav class="mt-12 flex justify-between text-sm">
-				<?php echo get_previous_posts_link( '&larr; ' . esc_html__( 'Newer results', 'vibe-ai' ) ); ?>
-				<?php echo get_next_posts_link( esc_html__( 'Older results', 'vibe-ai' ) . ' &rarr;' ); ?>
+				<?php echo get_previous_posts_link( '&larr; ' . esc_html__( 'Newer results', 'unlimited-wp-mcp-next' ) ); ?>
+				<?php echo get_next_posts_link( esc_html__( 'Older results', 'unlimited-wp-mcp-next' ) . ' &rarr;' ); ?>
 			</nav>
 		<?php else : ?>
 			<p class="text-secondary-600">
-				<?php esc_html_e( 'No matches. Try different keywords.', 'vibe-ai' ); ?>
+				<?php esc_html_e( 'No matches. Try different keywords.', 'unlimited-wp-mcp-next' ); ?>
 			</p>
 		<?php endif; ?>
 	</div>

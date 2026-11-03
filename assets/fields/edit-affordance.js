@@ -1,19 +1,19 @@
 /**
  * Hover-to-edit affordance — injects an "Edit" pin into each element
- * marked with data-wpvibe-edit (post meta) or data-wpvibe-edit-setting
+ * marked with data-uwnext-edit (post meta) or data-uwnext-edit-setting
  * (global setting). Click → navigates to wp-admin with a hash anchor at
  * the matching field input; the admin-side edit-focus script handles
  * scroll + focus + flash on arrival.
  *
- * Expects wpvibeEdit to be localized via wp_localize_script with:
+ * Expects uwnextEdit to be localized via wp_localize_script with:
  *   adminPostUrl     — /wp-admin/post.php
- *   adminSettingUrl  — /wp-admin/options-general.php?page=wpvibe
+ *   adminSettingUrl  — /wp-admin/options-general.php?page=uwnext
  *   labelEdit        — translated "Edit" label
  */
 (function () {
 	'use strict';
 
-	var config = window.wpvibeEdit;
+	var config = window.uwnextEdit;
 	if ( ! config ) {
 		return;
 	}
@@ -24,9 +24,9 @@
 
 	function pinHtml( href, label ) {
 		var a = document.createElement( 'a' );
-		a.className = 'wpvibe-edit-pin';
+		a.className = 'uwnext-edit-pin';
 		a.href      = href;
-		a.setAttribute( 'data-wpvibe-no-preview', '' );  // Don't rewrite this URL.
+		a.setAttribute( 'data-uwnext-no-preview', '' );  // Don't rewrite this URL.
 		a.setAttribute( 'aria-label', label );
 		a.innerHTML = pencilSvg + '<span>' + label + '</span>';
 		return a;
@@ -46,8 +46,8 @@
 	}
 
 	function attachPostPin( el ) {
-		var ref = el.getAttribute( 'data-wpvibe-edit' );
-		if ( ! ref || el.querySelector( ':scope > .wpvibe-edit-pin' ) ) {
+		var ref = el.getAttribute( 'data-uwnext-edit' );
+		if ( ! ref || el.querySelector( ':scope > .uwnext-edit-pin' ) ) {
 			return;
 		}
 		var parts = ref.split( ':' );
@@ -63,26 +63,26 @@
 		var url  = new URL( config.adminPostUrl, location.origin );
 		url.searchParams.set( 'post', String( postId ) );
 		url.searchParams.set( 'action', 'edit' );
-		var href = url.toString() + '#wpvibe-field-' + key;
+		var href = url.toString() + '#uwnext-field-' + key;
 
 		ensurePositionedHost( el );
 		el.appendChild( pinHtml( href, config.labelEdit || 'Edit' ) );
 	}
 
 	function attachSettingPin( el ) {
-		var key = el.getAttribute( 'data-wpvibe-edit-setting' );
-		if ( ! key || el.querySelector( ':scope > .wpvibe-edit-pin' ) ) {
+		var key = el.getAttribute( 'data-uwnext-edit-setting' );
+		if ( ! key || el.querySelector( ':scope > .uwnext-edit-pin' ) ) {
 			return;
 		}
-		var href = config.adminSettingUrl + '#wpvibe-field-' + key;
+		var href = config.adminSettingUrl + '#uwnext-field-' + key;
 		ensurePositionedHost( el );
 		el.appendChild( pinHtml( href, config.labelEdit || 'Edit' ) );
 	}
 
 	function scan( root ) {
-		( root.querySelectorAll ? root.querySelectorAll( '[data-wpvibe-edit]' ) : [] )
+		( root.querySelectorAll ? root.querySelectorAll( '[data-uwnext-edit]' ) : [] )
 			.forEach( attachPostPin );
-		( root.querySelectorAll ? root.querySelectorAll( '[data-wpvibe-edit-setting]' ) : [] )
+		( root.querySelectorAll ? root.querySelectorAll( '[data-uwnext-edit-setting]' ) : [] )
 			.forEach( attachSettingPin );
 	}
 
@@ -99,8 +99,8 @@
 				if ( node.nodeType !== 1 ) {
 					return;
 				}
-				if ( node.matches && node.matches( '[data-wpvibe-edit], [data-wpvibe-edit-setting]' ) ) {
-					if ( node.hasAttribute( 'data-wpvibe-edit' ) ) {
+				if ( node.matches && node.matches( '[data-uwnext-edit], [data-uwnext-edit-setting]' ) ) {
+					if ( node.hasAttribute( 'data-uwnext-edit' ) ) {
 						attachPostPin( node );
 					} else {
 						attachSettingPin( node );
