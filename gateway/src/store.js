@@ -1,20 +1,10 @@
 import { alias, canonicalURL, Denied, endpoints, hash, open, seal, stable } from './security.js';
-export const DEFAULT_SITES = [
-  {site_id:'00000000-0000-4000-8000-000000000001',display_name:'Consciously Awesome',alias:'consciously-awesome',canonical_url:'https://original.example.com'},
-  {site_id:'00000000-0000-4000-8000-000000000002',display_name:'Booking',alias:'booking',canonical_url:'https://booking.example.com'},
-];
+export const DEFAULT_SITES = [];
 export const stmt=(env,sql,...args)=>env.DB.prepare(sql).bind(...args);
 export const first=(env,sql,...args)=>stmt(env,sql,...args).first();
 export const run=(env,sql,...args)=>stmt(env,sql,...args).run();
 export async function all(env,sql,...args) { return (await stmt(env,sql,...args).all()).results; }
-export async function seed(env,user) {
-  const now=Date.now();
-  // Idempotent inserts never replace an existing site, alias, credential or disabled state.
-  await env.DB.batch(DEFAULT_SITES.flatMap(s=>[
-    stmt(env,'INSERT OR IGNORE INTO sites(user_id,site_id,display_name,canonical_url,enabled,created_at,updated_at) VALUES(?,?,?,?,1,?,?)',user,s.site_id,s.display_name,s.canonical_url,now,now),
-    stmt(env,'INSERT OR IGNORE INTO site_aliases(user_id,alias,site_id) VALUES(?,?,?)',user,s.alias,s.site_id),
-  ]));
-}
+export async function seed(env,user) { return; }
 export async function resolve(env,user,selector) {
   alias(selector);
   const rows=await all(env,'SELECT DISTINCT s.* FROM sites s LEFT JOIN site_aliases a ON a.user_id=s.user_id AND a.site_id=s.site_id WHERE s.user_id=? AND (s.site_id=? OR a.alias=?)',user,selector,selector);
