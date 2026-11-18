@@ -94,7 +94,7 @@ async function disconnect(r,env,user) {
 }
 async function generatedAlias(env,user,url) {
   const host=new URL(url).hostname.toLowerCase(),parts=host.split('.');
-  let base=(parts.length>2?parts[0]:parts[0]).replace(/[^a-z0-9-]/g,'-').replace(/^-+|-+$/g,'')||'site';
+  let base=(parts[0]==='www'&&parts.length>2?parts[1]:parts[0]).replace(/[^a-z0-9-]/g,'-').replace(/^-+|-+$/g,'')||'site';
   base=base.slice(0,63).replace(/-+$/,'')||'site';
   for(let n=1;n<=999;n++) {
     const suffix=n===1?'':'-'+n,candidate=(base.slice(0,63-suffix.length)+suffix);
@@ -177,11 +177,21 @@ async function call(env,user,name,input,origin) {
   if(name==='list_sites') return {body:{result:{content:[{type:'text',text:JSON.stringify(await siteList(env,user))}],isError:false}},http:200};
   if(name==='connect_site') {
     if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>k!=='site_url')) throw new Denied('connect_site accepts only site_url.');
-    const {site,site_alias}=await ensureSite(env,user,input.site_url);
+    const registration=await ensureSite(env,user,input.site_url),{site,site_alias}=registration;
     const existing=await first(env,'SELECT credential_id FROM oauth_connections WHERE user_id=? AND site_id=?',user,site.site_id);
     if(existing) return {body:{result:{content:[{type:'text',text:JSON.stringify({site_id:site.site_id,site_url:site.canonical_url,alias:site_alias,status:'connected'})}],isError:false}},http:200};
-    const authorization_url=await authorizationURL(env,user,site,origin+'/oauth/callback');
-    return {body:{result:{content:[{type:'text',text:JSON.stringify({site_id:site.site_id,site_url:site.canonical_url,alias:site_alias,status:'authorization_required',authorization_url})}],isError:false}},http:200};
+    try {
+      const authorization_url=await authorizationURL(env,user,site,origin+'/oauth/callback');
+      return {body:{result:{content:[{type:'text',text:JSON.stringify({site_id:site.site_id,site_url:site.canonical_url,alias:site_alias,status:'authorization_required',authorization_url})}],isError:false}},http:200};
+    } catch(error) {
+      if(registration.created) await env.DB.batch([
+        stmt(env,'DELETE FROM oauth_flows WHERE user_id=? AND site_id=?',user,site.site_id),
+        stmt(env,'DELETE FROM oauth_clients WHERE user_id=? AND site_id=?',user,site.site_id),
+        stmt(env,'DELETE FROM site_aliases WHERE user_id=? AND site_id=?',user,site.site_id),
+        stmt(env,'DELETE FROM sites WHERE user_id=? AND site_id=?',user,site.site_id),
+      ]);
+      throw error;
+    }
   }
   if(name==='remove_site') {
     if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).some(k=>k!=='site_url')) throw new Denied('remove_site accepts only site_url.');
