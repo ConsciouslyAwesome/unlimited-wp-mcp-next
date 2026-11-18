@@ -52,11 +52,12 @@ for(const wrongPage of ['unlimited-wp-mcp','wpvibe']) test('reject approval for 
   assert.equal(count,1);assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM approval_scopes').get().n,0);
 });
 
-test('one shared 51-tool catalog plus discovery, explicit site on all tools',async()=>{
+test('one shared 51-tool catalog plus WPVibe-equivalent site management, explicit site on WordPress tools',async()=>{
   const e=await env(),r=await gateway.fetch(request('/mcp',{jsonrpc:'2.0',id:1,method:'tools/list'},''),e),body=await r.json();
-  assert.equal(body.result.tools.length,52);assert.equal(UPSTREAM_TOOLS.length,51);
+  assert.equal(body.result.tools.length,54);assert.equal(UPSTREAM_TOOLS.length,51);
   assert.equal(UPSTREAM_TOOLS.filter(t=>t.annotations?.readOnlyHint).length,29);
-  for(const t of body.result.tools.filter(t=>t.name!=='list_sites')) assert.ok(t.inputSchema.required.includes('site'));
+  for(const t of body.result.tools.filter(t=>!['connect_site','list_sites','remove_site'].includes(t.name))) assert.ok(t.inputSchema.required.includes('site'));
+  assert.deepEqual(body.result.tools.filter(t=>['connect_site','list_sites','remove_site'].includes(t.name)).map(t=>t.name),['connect_site','list_sites','remove_site']);
   assert.ok(body.result.tools.some(t=>t.name==='delete_draft_theme' && !t.annotations.readOnlyHint));
 });
 test('idempotent schema and registry seeding preserve populated credentials and disabled state',async()=>{
@@ -160,6 +161,38 @@ test('OAuth connect pins site, PKCE, callback and encrypted per-site flow',async
   assert.equal((await gateway.fetch(new Request(cb,{headers:{'oai-authenticated-user-id':user}}),e)).status,200);
   assert.equal((await gateway.fetch(new Request(cb,{headers:{'oai-authenticated-user-id':user}}),e)).status,400);
 });
+test('connect_site registers an arbitrary Next site and returns one-click authorization URL',async()=>{
+  const e=await env(),url='https://reg.consciouslyawesome.com';let calls=0;
+  globalThis.fetch=async(target,init)=>{calls++;assert.equal(String(target),url+'/wp-json/unlimited-wp-mcp-next/v1/oauth/register-path');assert.equal(init.redirect,'manual');return response({client_id:'oauth-reg'});};
+  const x=await rpc(e,'connect_site',{site_url:url});assert.ok(x.body.result);assert.equal(calls,1);
+  const data=JSON.parse(x.body.result.content[0].text);assert.equal(data.site_url,url);assert.equal(data.alias,'reg');assert.equal(data.status,'authorization_required');
+  const auth=new URL(data.authorization_url);assert.equal(auth.origin,url);assert.equal(auth.pathname,'/wp-admin/admin-post.php');assert.equal(auth.searchParams.get('action'),'uwnext_authorize');assert.equal(auth.searchParams.get('code_challenge_method'),'S256');
+  const stored=e.DB.sql.prepare('SELECT * FROM sites WHERE canonical_url=?').get(url);assert.ok(stored);assert.equal(stored.enabled,1);
+  assert.equal(e.DB.sql.prepare('SELECT alias FROM site_aliases WHERE site_id=?').get(stored.site_id).alias,'reg');
+});
+
+test('connect_site is idempotent for an already connected site',async()=>{
+  const e=await env();globalThis.fetch=()=>assert.fail('Existing connection should not start OAuth');
+  const x=await rpc(e,'connect_site',{site_url:B.canonical_url});const data=JSON.parse(x.body.result.content[0].text);
+  assert.equal(data.status,'connected');assert.equal(data.site_id,B.site_id);assert.equal(data.alias,B.alias);
+});
+
+test('remove_site removes local registry and attempts WordPress revocation',async()=>{
+  const e=await env();let calls=0;
+  globalThis.fetch=async(target,init)=>{calls++;assert.equal(String(target),endpoints(B).revoke);assert.equal(new URLSearchParams(init.body).get('refresh_token'),null);assert.equal(new URLSearchParams(init.body).get('token'),'refresh-booking');return response({revoked:true});};
+  const x=await rpc(e,'remove_site',{site_url:B.canonical_url});const data=JSON.parse(x.body.result.content[0].text);
+  assert.equal(data.removed,true);assert.equal(data.wordpress_revocation_confirmed,true);assert.equal(calls,1);
+  assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM sites WHERE site_id=?').get(B.site_id).n,0);
+  assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM oauth_connections WHERE site_id=?').get(B.site_id).n,0);
+  assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM oauth_clients WHERE site_id=?').get(B.site_id).n,0);
+  assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM site_aliases WHERE site_id=?').get(B.site_id).n,0);
+});
+
+test('remove_site fails closed for an unknown URL without network access',async()=>{
+  const e=await env();globalThis.fetch=()=>assert.fail('Unknown site must not reach network');
+  const x=await rpc(e,'remove_site',{site_url:'https://unknown.agency.com'});assert.ok(x.body.error);
+});
+
 test('refresh is site scoped and independent from other grants',async()=>{
   const e=await env(),other=e.DB.sql.prepare('SELECT * FROM oauth_connections WHERE site_id=?').get(A.site_id);
   e.DB.sql.prepare('UPDATE oauth_connections SET expires_at=1 WHERE site_id=?').run(B.site_id);
