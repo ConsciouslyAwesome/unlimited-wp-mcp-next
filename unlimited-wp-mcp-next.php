@@ -2,17 +2,17 @@
 /**
  * Plugin Name: Unlimited WP MCP Next
  * Description: Owner-controlled WordPress MCP server with local approvals and no usage quota.
- * Version: 2.0.0
+ * Version: 2.0.1
  * Author: Unlimited WP MCP contributors
  * License: GPL-2.0-or-later
  * Text Domain: unlimited-wp-mcp-next
  * Requires at least: 6.6
  * Requires PHP: 8.1
- * Update URI: false
+ * Update URI: https://github.com/ConsciouslyAwesome/unlimited-wp-mcp-next
  */
 defined('ABSPATH') || exit;
 define('UWNext_NAME', 'Unlimited WP MCP Next');
-define('UWNext_VERSION', '2.0.0');
+define('UWNext_VERSION', '2.0.1');
 define('UWNext_PROTOCOL', '2026-07-28');
 define('UWNext_NS', 'unlimited-wp-mcp-next/v1');
 define('UWNext_PLUGIN_DIR', plugin_dir_path(__FILE__));
@@ -21,11 +21,17 @@ define('UWNext_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
 require_once __DIR__ . '/includes/local-store.php';
 require_once __DIR__ . '/includes/local-auth.php';
+require_once __DIR__ . '/includes/local-connection.php';
 require_once __DIR__ . '/includes/local-tools.php';
+require_once __DIR__ . '/includes/class-uwnext-approval-bypass.php';
+require_once __DIR__ . '/includes/local-sql-approvals.php';
 require_once __DIR__ . '/includes/local-mcp.php';
 require_once __DIR__ . '/includes/local-admin.php';
 require_once __DIR__ . '/includes/upstream-helpers.php';
 require_once __DIR__ . '/includes/local-adapters.php';
+require_once __DIR__ . '/includes/trait-uwnext-request-detach.php';
+require_once __DIR__ . '/includes/class-uwnext-self-update.php';
+require_once __DIR__ . '/includes/class-uwnext-update-source.php';
 require_once __DIR__ . '/includes/local-capabilities.php';
 require_once __DIR__ . '/includes/local-jobs.php';
 require_once __DIR__ . '/includes/local-resources.php';
@@ -46,6 +52,9 @@ register_activation_hook(__FILE__, 'uwnext_activate');
 register_deactivation_hook(__FILE__, 'uwnext_deactivate');
 add_action('uwnext_cleanup', array('UWNext_Store','cleanup'));
 add_action('plugins_loaded', function() {
+    UWNext_Approval_Bypass::instance();
+    UWNext_Self_Update::instance();
+    UWNext_Update_Source::instance();
     UWNext_REST::instance();
     foreach (array('UWNext_Elementor','UWNext_Beaver','UWNext_Breakdance','UWNext_Bricks','UWNext_Preview','UWNext_Live_Reload','UWNext_Fields','UWNext_Edit_Affordance','UWNext_Builder_Login','UWNext_Timing','UWNext_Output_Guard') as $class) { $class::instance(); }
     if (is_admin()) { UWNext_Meta_Boxes::instance(); UWNext_Settings::instance(); UWNext_Post_Sidebar::instance(); }

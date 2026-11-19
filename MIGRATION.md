@@ -1,3 +1,10 @@
+# Historical migration record
+
+The dated 2.0.0 records below remain historical. Current 2.0.1 updater, bypass,
+connection and resource behavior, catalog counts and seed cleanup are described
+in `FINAL-ACCEPTANCE-2.0.1.md` and the individual parity reports. Earlier statements
+that those capabilities were removed are superseded.
+
 # Migration and upstream-divergence status — 2026-11-01
 
 Upstream identity is pinned in UPSTREAM.md. This development branch adapts GPL

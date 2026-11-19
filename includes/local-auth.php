@@ -136,6 +136,7 @@ final class UWNext_Auth {
         }
         echo '<!doctype html><meta charset="utf-8"><title>Connect Unlimited WP MCP</title><main style="max-width:720px;margin:4em auto;font:18px system-ui"><h1>Connect '.esc_html($client['name']).'</h1><p>This app requests WordPress management access as <strong>'.esc_html(wp_get_current_user()->user_login).'</strong>. Your WordPress capabilities apply. All writes require a separate browser approval.</p><p>Return address: <code>'.esc_html($p['redirect_uri']).'</code></p><form method="post" action="'.esc_url(admin_url('admin-post.php')).'">';
         foreach(array('client_id','redirect_uri','response_type','code_challenge','code_challenge_method','resource','scope','state') as $key) { echo '<input type="hidden" name="'.esc_attr($key).'" value="'.esc_attr($p[$key]??'').'">'; }
+        echo UWNext_Connection::warnings_html();
         echo '<input type="hidden" name="action" value="uwnext_authorize">'; wp_nonce_field('uwnext_oauth_'.$bound);
         echo '<button name="decision" value="allow">Allow connection</button> <button name="decision" value="deny">Decline</button></form></main>'; exit;
     }

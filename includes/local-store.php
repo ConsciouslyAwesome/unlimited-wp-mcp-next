@@ -68,12 +68,17 @@ PRIMARY KEY  (id)
         global $wpdb;
         $days=max(1,min(365,(int)get_option('uwnext_retention_days',30)));
         $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->prefix}uwnext_events WHERE created < %d",time()-DAY_IN_SECONDS*$days));
-        foreach(array('approval','code','access','refresh','spent_refresh') as $kind) { foreach(self::records($kind) as $key=>$row) { if(isset($row['expires']) && $row['expires']<time()) { delete_option($key); } } }
+        foreach(array('approval','sql_session','code','access','refresh','spent_refresh') as $kind) { foreach(self::records($kind) as $key=>$row) { if(isset($row['expires']) && $row['expires']<time()) { delete_option($key); } } }
     }
 }
 /** Compatibility adapter: upstream raw command/result logging is deliberately omitted. */
 class UWNext_Audit_Log {
-    public static function log_execution($args) { return UWNext_Store::log('approved_cli','executed'); }
+    public static function log_execution($args) {
+        $operation=$args['operation']??'';
+        return str_starts_with($operation,'approval_bypass:')
+            ? UWNext_Store::log($operation,'changed')
+            : UWNext_Store::log('approved_cli','executed');
+    }
     public static function get_recent($limit=50,$offset=0) { return UWNext_Store::recent($limit); }
     public static function count() { global $wpdb; return (int)$wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}uwnext_events"); }
 }

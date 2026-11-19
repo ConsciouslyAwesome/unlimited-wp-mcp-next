@@ -78,6 +78,7 @@ final class UWNext_MCP {
             $valid=UWNext_Tools::validate($defs[$p->name],$args);
             if(is_wp_error($valid)) { return self::error($id,-32602,$valid->get_error_message()); }
             $result=UWNext_Tools::result(UWNext_Tools::call($p->name,$args));
+            if($p->name==='site_info') { UWNext_Connection::note_read($result); }
         } elseif($obj->method==='tools/list') {
             if(isset($p->cursor)) { return self::error($id,-32602,'This catalog has one page; omit cursor.'); }
             $result=array('resultType'=>'complete','tools'=>UWNext_Tools::listing(),'ttlMs'=>60000,'cacheScope'=>'public');

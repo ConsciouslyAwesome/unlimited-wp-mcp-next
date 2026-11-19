@@ -19,7 +19,7 @@ $network=0;
 add_filter('pre_http_request',function($pre)use(&$network){if(false!==$pre){return $pre;}$network++;return new WP_Error('fixture_no_network','Fixture denies all outbound HTTP.');});
 require WP_PLUGIN_DIR.'/unlimited-wp-mcp-next/unlimited-wp-mcp-next.php';
 uwnext_activate();
-foreach(array('UWNext_REST','UWNext_Elementor','UWNext_Beaver','UWNext_Breakdance','UWNext_Bricks','UWNext_Preview','UWNext_Live_Reload','UWNext_Fields','UWNext_Edit_Affordance','UWNext_Builder_Login') as $class) { $class::instance(); }
+foreach(array('UWNext_Approval_Bypass','UWNext_Self_Update','UWNext_Update_Source','UWNext_REST','UWNext_Elementor','UWNext_Beaver','UWNext_Breakdance','UWNext_Bricks','UWNext_Preview','UWNext_Live_Reload','UWNext_Fields','UWNext_Edit_Affordance','UWNext_Builder_Login') as $class) { $class::instance(); }
 $admin=get_user_by('login','next_admin');wp_set_current_user($admin->ID);
 uwnext_legacy_template_api();
 wpvibe_field_register('post','legacy_fixture',array('type'=>'text','label'=>'Legacy fixture'));
@@ -144,6 +144,7 @@ UWNext_Admin::approve($revoked_id,$admin->ID);$revoked_args['approval_id']=$revo
 UWNext_Auth::revoke($job_connection);do_action('uwnext_job',$revoked_id);
 check($wpdb->get_var("SELECT value FROM {$wpdb->prefix}migration_fixture WHERE id=1")==='background','revocation before background execution prevents mutation');
 rpc('tools/list');
+require __DIR__.'/acceptance.php';
 require __DIR__.'/security.php';
 rpc('tools/list');
 require __DIR__.'/theme.php';

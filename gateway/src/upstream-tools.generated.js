@@ -460,7 +460,7 @@ export const UPSTREAM_TOOLS = [
   },
   {
     "name": "cli_run",
-    "description": "Run an allowlisted WordPress administrative command using native PHP, not a shell. Supports posts, comments, users, roles, plugins, themes, options, transients, database and core. All commands require browser approval; destructive commands include a fresh state preview. Requires manage_options plus the command-specific capability.",
+    "description": "Run an allowlisted WordPress administrative command using native PHP, not a shell. Supports posts, comments, users, roles, plugins, themes, options, transients, database and core. Commands normally require browser approval; destructive commands include a fresh state preview. Requires manage_options plus the command-specific capability.",
     "inputSchema": {
       "type": "object",
       "properties": {

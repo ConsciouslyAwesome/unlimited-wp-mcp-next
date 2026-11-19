@@ -43,7 +43,7 @@ final class UWNext_Tools {
                 }
                 if(!$read) { $props['approval_id']=array('type'=>'string','pattern'=>'^[a-f0-9]{48}$','description'=>'One-use local browser approval returned by a prior call with these exact arguments.'); }
                 $label=ucwords(str_replace('_',' ',$name));
-                $descriptions=array('cli_run'=>'Run an allowlisted WordPress administrative command using native PHP, not a shell. Supports posts, comments, users, roles, plugins, themes, options, transients, database and core. All commands require browser approval; destructive commands include a fresh state preview.','site_info'=>'Read site, theme, plugin and authenticated WordPress user information.','file_read'=>'Read a bounded theme or wp-content text file. Private/configuration files and sandbox escapes are denied.','file_write'=>'Write a draft theme file with PHP syntax checks and optional source-hash concurrency protection.','content_edit'=>'Replace exact text in an authorized post, meta value or allowed option.','draft_theme_publish'=>'Publish the draft theme after safety checks. Replaces live theme files; browser approval required.');
+                $descriptions=array('cli_run'=>'Run an allowlisted WordPress administrative command using native PHP, not a shell. Supports posts, comments, users, roles, plugins, themes, options, transients, database and core. Commands normally require browser approval; destructive commands include a fresh state preview.','site_info'=>'Read site, theme, plugin and authenticated WordPress user information.','file_read'=>'Read a bounded theme or wp-content text file. Private/configuration files and sandbox escapes are denied.','file_write'=>'Write a draft theme file with PHP syntax checks and optional source-hash concurrency protection.','content_edit'=>'Replace exact text in an authorized post, meta value or allowed option.','draft_theme_publish'=>'Publish the draft theme after safety checks. Replaces live theme files; browser approval required.');
                 $desc=$descriptions[$name]??($label.'. Uses the original WordPress handler and capability checks. '.($read?'Read operation.':'Write or potentially destructive operation; requires local browser approval.'));
                 $callback=is_array($def['permission_callback']) ? $def['permission_callback'][1] : '';
                 $caps=array('can_manage_themes'=>'edit_theme_options','can_manage_options'=>'manage_options','can_edit_posts'=>'edit_posts','can_read_themes'=>'edit_themes (edit_theme_options on a locked single site)','can_read_files'=>'edit_themes for theme files; manage_options for wp-content; network administrator on multisite','can_edit_themes'=>'edit_themes; respects DISALLOW_FILE_EDIT and DISALLOW_FILE_MODS','can_publish_theme'=>'edit_themes and switch_themes','can_edit_content'=>'edit_post for the target post; manage_options for options','can_run_cli'=>'manage_options plus the command-specific capability','can_edit_code_snippets_approved'=>'wpcode_edit_snippets');
@@ -109,21 +109,33 @@ final class UWNext_Tools {
         // A read-only content search must not use the broad theme capability to reveal private posts.
         if(str_starts_with($tool['route'],'/content/') && in_array($args['target_type']??'',array('post','meta'),true) && !current_user_can('edit_post',(int)($args['post_id']??0))) { return self::deny('capability_denied','This post is not editable by this user.'); }
         if($name==='cli_run') { $policy=(new UWNext_CLI())->uwnext_preview($req['command']); if(is_wp_error($policy)) { return $policy; } }
-        $op=UWNext_Store::id();$row=null;
+        $op=UWNext_Store::id();$row=null;$mode='exact';
+        // Bypass is restricted to the two proof routes allowed by GPL 1.20.5.
+        // Detached jobs keep their existing exact-operation authorization.
+        $session=!$approval && $name==='cli_run' && empty($req['detach']) && UWNext_SQL_Approvals::available($policy);
+        $bypass=!$approval && empty($req['detach']) && in_array($name,array('cli_run','code_snippet'),true) && UWNext_Approval_Bypass::is_on();
+        if($name==='cli_run' && (in_array($policy['operation']??'',UWNext_Approval_Bypass::ALWAYS_ASK,true) || (str_starts_with($policy['operation']??'','db_query_') && !UWNext_SQL_Approvals::eligible($policy)))) { $bypass=false; }
+        if($session) { $mode='remembered_sql'; } elseif($bypass) { $mode='bypassed'; }
         if(!$tool['read']) {
-            if(!$approval) { return self::request_approval($name,$args,$req); }
+            if(!$approval && $mode==='exact') { return self::request_approval($name,$args,$req); }
+            if($mode==='exact') {
             $row=UWNext_Store::get('approval',$approval);
             if(!$row || empty($row['approved']) || $row['expires']<=time() || $row['user']!==get_current_user_id() || !hash_equals($row['connection'],UWNext_Auth::$connection) || !hash_equals($row['digest'],UWNext_Store::digest($name,$args)) || $row['site']!==site_url()) { return self::deny('approval_invalid','Approval is missing, expired, consumed or does not match this operation.'); }
             $op=$approval;
+            }
         }
         $lock=false;
         if(!$tool['read']) {
             $lock=add_option('uwnext_write_lock',$op,'',false);
             if(!$lock) { return self::deny('operation_busy','Another write is running or needs recovery. Inspect recent receipts before clearing a stale lock in WordPress.',409); }
-            if(!UWNext_Store::consume('approval',$approval,$row)) { delete_option('uwnext_write_lock');return self::deny('approval_spent','Approval was already used.'); }
+            if($mode==='remembered_sql' && !UWNext_SQL_Approvals::take($policy)) { delete_option('uwnext_write_lock');return self::request_approval($name,$args,$req); }
+            if($mode==='bypassed' && !UWNext_Approval_Bypass::is_on()) { delete_option('uwnext_write_lock');return self::request_approval($name,$args,$req); }
+            if($mode==='exact' && !UWNext_Store::consume('approval',$approval,$row)) { delete_option('uwnext_write_lock');return self::deny('approval_spent','Approval was already used.'); }
         }
         try {
             if($name==='cli_run'&&!empty($req['detach'])) { return UWNext_Jobs::enqueue($op,$row); }
+            if($mode!=='exact' && !UWNext_Store::log($name,$mode,$op)) { return self::deny('audit_unavailable','Bypassed/session operation could not be logged.',503); }
+            UWNext_Approval_Bypass::$request_bypassed=$mode==='bypassed';
             if(!UWNext_Store::log($name,'started',$op)) { return self::deny('audit_unavailable','Local operation receipt could not be stored.',503); }
             $payload=$row?UWNext_Store::decrypt($row['payload']):null;
             if($row && !$payload) { UWNext_Store::log($name,'failed',$op);return self::deny('approval_unreadable','Approval cannot be decrypted.'); }
@@ -137,9 +149,11 @@ final class UWNext_Tools {
                 $cli=new UWNext_CLI();
                 // The local gate covers every CLI invocation. Only upstream
                 // destructive commands use its approved/snapshot execution path.
-                $out=isset($payload['preview']['operation'])
+                $out=$mode!=='exact'
+                    ? $cli->run_approved($req['command'],(bool)$req['confirm_write'])
+                    : (isset($payload['preview']['operation'])
                     ? $cli->run_approved($req['command'],(bool)$req['confirm_write'],wp_json_encode($payload['preview']))
-                    : $cli->run($req['command'],(bool)$req['confirm_write']);
+                    : $cli->run($req['command'],(bool)$req['confirm_write']));
             } else { self::$executing=!$tool['read']; $out=call_user_func($def['callback'],$req); }
             $failed=is_wp_error($out) || ($out instanceof WP_REST_Response && ($out->get_status()>=400 || (!empty($out->get_data()['exit_code']))));
             UWNext_Store::log($name,$failed?'failed':'completed',$op);
@@ -147,7 +161,7 @@ final class UWNext_Tools {
         } catch(Throwable $error) {
             UWNext_Store::log($name,'host_failure',$op);
             return self::deny('host_failure','WordPress could not complete the operation. Inspect the local receipt before retrying a write.',503);
-        } finally { self::$executing=false; if($lock && get_option('uwnext_write_lock')===$op) { delete_option('uwnext_write_lock'); } }
+        } finally { UWNext_Approval_Bypass::$request_bypassed=false;self::$executing=false; if($lock && get_option('uwnext_write_lock')===$op) { delete_option('uwnext_write_lock'); } }
     }
     public static function request_approval($name,$args,$request) {
         $preview=null;

@@ -1,5 +1,28 @@
 # Changes
 
+## 2.0.1 — 2026-11-18
+
+- Restore the requested image/skill adapters using independently owned content and
+  optional Unlimited Unsplash configuration, with Openverse fallback.
+- Remove production example registry seeding; add guarded legacy-fixture cleanup.
+  Align gateway version and bypass-status HTTP header with Unlimited 2.0.1.
+
+- Add source-based connection/readiness diagnostics, consent-page warnings and
+  fresh authenticated post-OAuth site verification. See CONNECTION-PARITY.md for
+  status semantics, Unlimited adaptations and remaining baseline differences.
+- Add source-evidenced WPVibe 1.20.5 public-name adapters to the gateway, preserving
+  existing handlers, encrypted approval handoff and hidden legacy aliases. See
+  MCP-PARITY.md for verified matches and unavailable hosted contracts.
+- Restore administrator-browser approval bypass and bounded remembered SQL using
+  Unlimited's existing local approvals, audit and connection scope. See
+  APPROVAL-PARITY.md for the GPL baseline scope and unavailable Worker details.
+- Restore the WPVibe 1.20.5 deferred self-update implementation under Unlimited
+  names, retaining its version assertions, loopback/request handoff, updater lock,
+  rollback and activation recovery, status reporting and network auto-update list.
+- Discover this plugin's updates from stable ConsciouslyAwesome/Unlimited GitHub
+  releases with an installable `unlimited-wp-mcp-next.zip` asset. Other plugins'
+  update sources and the existing local approval flow are unchanged.
+
 ## 2.0.0 — 2026-11-02
 
 - Pin GPL upstream at 62bc77ccd1c15faf766f527a7935fe32f1b227d3.

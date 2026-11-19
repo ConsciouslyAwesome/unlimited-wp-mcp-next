@@ -1,0 +1,1043 @@
+{
+  "baseline": {
+    "version": "1.20.5",
+    "commit": "62bc77ccd1c15faf766f527a7935fe32f1b227d3",
+    "source": "https://github.com/awesomemotive/wpvibe-ai-mcp",
+    "authoritative_files": [
+      "README.md",
+      "includes/class-wpvibe-rest.php"
+    ],
+    "hosted_catalog_available": false
+  },
+  "result": "Functional name/route compatibility, not byte-for-byte hosted MCP schema parity",
+  "documented_names": [
+    "connect_site",
+    "site_info",
+    "list_sites",
+    "remove_site",
+    "rest_api",
+    "upload_media",
+    "search_images",
+    "discover_abilities",
+    "get_ability_info",
+    "run_ability",
+    "read_file",
+    "edit_file",
+    "write_file",
+    "delete_file",
+    "list_files",
+    "search_files",
+    "get_file_outline",
+    "create_draft_theme",
+    "publish_draft_theme",
+    "delete_draft_theme",
+    "get_preview_url",
+    "create_classic_theme",
+    "run_wp_cli",
+    "get_page_html",
+    "navigate",
+    "load_skill"
+  ],
+  "documented_name_count": 26,
+  "advertised_tool_count": 28,
+  "missing_documented_names": [],
+  "exact_hosted_tool_contracts_verified": [],
+  "unchanged_site_management": [
+    "connect_site",
+    "list_sites",
+    "remove_site"
+  ],
+  "adapters": [
+    {
+      "public_name": "site_info",
+      "internal_handler": "site_info",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/site-info",
+      "native_argument_matches": [],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "discover_abilities",
+      "internal_handler": "abilities",
+      "name_evidence": "pinned README MCP table",
+      "source_route": null,
+      "native_argument_matches": [],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "get_ability_info",
+      "internal_handler": "ability_info",
+      "name_evidence": "pinned README MCP table",
+      "source_route": null,
+      "native_argument_matches": [],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "name",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "run_ability",
+      "internal_handler": "ability_run",
+      "name_evidence": "pinned README MCP table",
+      "source_route": null,
+      "native_argument_matches": [],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "input": {
+            "type": "object"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "name",
+          "input",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "read_file",
+      "internal_handler": "file_read",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/file/read",
+      "native_argument_matches": [
+        "scope",
+        "path",
+        "start_line",
+        "end_line"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "theme",
+              "wp-content"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "start_line": {
+            "type": "integer"
+          },
+          "end_line": {
+            "type": "integer"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "path",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "write_file",
+      "internal_handler": "file_write",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/file/write",
+      "native_argument_matches": [
+        "expected_source_hash",
+        "path",
+        "content"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "expected_source_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "path",
+          "content",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "edit_file",
+      "internal_handler": "file_edit",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/file/edit",
+      "native_argument_matches": [
+        "path",
+        "old_content",
+        "new_content"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "old_content": {
+            "type": "string"
+          },
+          "new_content": {
+            "type": "string"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "path",
+          "old_content",
+          "new_content",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "delete_file",
+      "internal_handler": "file_delete",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/file/delete",
+      "native_argument_matches": [
+        "path"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "path",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "list_files",
+      "internal_handler": "file_list",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/file/list",
+      "native_argument_matches": [
+        "scope",
+        "directory",
+        "pattern"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "theme",
+              "wp-content"
+            ]
+          },
+          "directory": {
+            "type": "string"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "search_files",
+      "internal_handler": "file_search",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/file/search",
+      "native_argument_matches": [
+        "pattern",
+        "case_sensitive",
+        "extensions",
+        "max_results"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string"
+          },
+          "case_sensitive": {
+            "type": "boolean",
+            "default": false
+          },
+          "extensions": {
+            "type": "array"
+          },
+          "max_results": {
+            "type": "integer",
+            "default": 100
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "pattern",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "get_file_outline",
+      "internal_handler": "file_outline",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/file/outline",
+      "native_argument_matches": [
+        "path"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "path",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "create_draft_theme",
+      "internal_handler": "create_draft_theme",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/draft-theme",
+      "native_argument_matches": [],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "publish_draft_theme",
+      "internal_handler": "draft_theme_publish",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/draft-theme/publish",
+      "native_argument_matches": [
+        "expected_source_hash",
+        "saved_customizations"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "expected_source_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "saved_customizations": {
+            "type": "string",
+            "enum": [
+              "set_aside",
+              "keep"
+            ]
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "delete_draft_theme",
+      "internal_handler": "delete_draft_theme",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/draft-theme/delete",
+      "native_argument_matches": [],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "get_preview_url",
+      "internal_handler": "draft_theme_preview",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/draft-theme/preview",
+      "native_argument_matches": [],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "create_classic_theme",
+      "internal_handler": "create_classic_theme_safe",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/create-classic-theme-safe",
+      "native_argument_matches": [
+        "theme_name",
+        "description"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "theme_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "theme_name",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "run_wp_cli",
+      "internal_handler": "cli_run",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/cli/run",
+      "native_argument_matches": [
+        "command",
+        "confirm_write"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "confirm_write": {
+            "type": "boolean",
+            "default": false
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "command",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "rest_api",
+      "internal_handler": "rest_api_write",
+      "name_evidence": "pinned README MCP table",
+      "source_route": null,
+      "native_argument_matches": [],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "DELETE"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "get_page_html",
+      "internal_handler": "rendered_html",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/rendered-html",
+      "native_argument_matches": [
+        "path"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "navigate",
+      "internal_handler": "navigate",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/navigate",
+      "native_argument_matches": [
+        "url"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "url",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "upload_media",
+      "internal_handler": "upload_media",
+      "name_evidence": "pinned README MCP table",
+      "source_route": "/upload-media",
+      "native_argument_matches": [
+        "url",
+        "title",
+        "alt_text",
+        "post_id"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "alt_text": {
+            "type": "string"
+          },
+          "post_id": {
+            "type": "integer"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "url",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "search_images",
+      "internal_handler": "search_images",
+      "name_evidence": "pinned README MCP table",
+      "source_route": null,
+      "native_argument_matches": [],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 10
+          },
+          "orientation": {
+            "type": "string",
+            "enum": [
+              "landscape",
+              "portrait",
+              "squarish"
+            ]
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "independently authored resource response; hosted wrapper unavailable; see IMAGE-SKILL-PARITY.md",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "load_skill",
+      "internal_handler": "load_skill",
+      "name_evidence": "pinned README MCP table",
+      "source_route": null,
+      "native_argument_matches": [],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "resource": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "independently authored resource response; hosted wrapper unavailable; see IMAGE-SKILL-PARITY.md",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "code_snippet",
+      "internal_handler": "code_snippet",
+      "name_evidence": "pinned PHP handler; hosted advertisement unverified",
+      "source_route": "/code-snippet",
+      "native_argument_matches": [
+        "action",
+        "id",
+        "code",
+        "title",
+        "code_type",
+        "location",
+        "insert_method"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "default": "create"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "code": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "code_type": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "insert_method": {
+            "type": "string",
+            "default": "auto"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    },
+    {
+      "public_name": "operation_receipt",
+      "internal_handler": "operation_receipt",
+      "name_evidence": "retained Unlimited extension",
+      "source_route": null,
+      "native_argument_matches": [],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{48}$"
+          },
+          "site_url": {
+            "type": "string",
+            "description": "WordPress site URL"
+          }
+        },
+        "required": [
+          "operation_id",
+          "site_url"
+        ],
+        "additionalProperties": false
+      },
+      "unverifiable_hosted_fields": {
+        "description": "not present in GPL source; reconstructed from verified functionality",
+        "inputSchema": "exact MCP wrapper unavailable; native route fields used where shipped",
+        "annotations": "Unlimited handler annotations retained; hosted values unavailable",
+        "output": "native MCP content/error result preserved; closed wrapper formatting unverified",
+        "site_url": "explicit registry URL envelope chosen by Unlimited; pinned hosted field requirement unavailable",
+        "additionalProperties": "closed-object validation retained locally; exact hosted policy unknown"
+      }
+    }
+  ],
+  "closed_service_gaps": [
+    "Exact hosted descriptions, MCP wrapper argument naming/defaults/required fields, annotations and output formatting are not in the pinned repository.",
+    "Hosted JavaScript browser rendering, browser navigation UX and wrapper read-file formatting/cache stubs are not provided by the PHP handlers.",
+    "Image search uses requested query/count/orientation with optional Unlimited-owned Unsplash credentials and Openverse fallback. Historic defaults and hosted output remain unverified; see IMAGE-SKILL-PARITY.md.",
+    "Skill catalog, deterministic query lookup and workflow resource adapters expose four independent local workflows. Hosted names/content/ranking/hierarchy remain unverified; see IMAGE-SKILL-PARITY.md.",
+    "Hosted approval panels/status polling and signed-worker UX are not recreated; native local browser approval and receipts remain. No later tools are inferred from the current live WPVibe catalog."
+  ],
+  "remaining_schema_differences": [
+    "rest_api exposes existing local path/parameters plus documented GET/POST/PUT/DELETE; hosted route/body/query/fields/max_length shapes cannot be proved.",
+    "Abilities retain native name/input; hosted ability_name, hint flags or legacy input_json cannot be proved and are not inferred.",
+    "get_page_html retains native optional path; url/selector/max_length/JavaScript options are not inferred.",
+    "load_skill supports optional name/query/resource and no-argument local catalog; search_images supports query/count/orientation. These requested adapters do not prove the absent hosted schemas. Both retain optional site_url and require it when multiple connected sites make routing ambiguous.",
+    "Native runtime validation remains authoritative: Unlimited file content limits, array item validation, search bounds and safety refusals can be stricter than the raw GPL route metadata.",
+    "Operation receipt is an explicit retained Unlimited extension. Internal aliases remain callable with their existing site/approval_id shapes but are not advertised.",
+    "get_file_outline/read_file wrappers return existing native structured results; exact hosted line-number formatting and unchanged-cache behavior are unverified."
+  ],
+  "local_migration": "gateway/drizzle/0001_interface_compat.sql adds encrypted pending-approval storage to the same existing D1 binding. Not applied to any hosted database.",
+  "unchanged_backend": [
+    "WordPress handlers",
+    "OAuth and PKCE",
+    "AES-GCM credential encryption",
+    "registered user/site/credential isolation",
+    "approval scope binding and one-use consumption",
+    "operation receipts and diagnostic redaction",
+    "no-quota behavior"
+  ]
+}

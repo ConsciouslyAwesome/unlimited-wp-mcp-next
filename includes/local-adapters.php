@@ -16,11 +16,3 @@ final class UWNext_White_Label {
 final class UWNext_Connection_Status {
     public static function note_activity() {}
 }
-final class UWNext_Self_Update {
-    public static function auto_update_list() { return (array)get_site_option('auto_update_plugins',array()); }
-    public static function set_auto_update_list($value) { return update_site_option('auto_update_plugins',array_values($value)); }
-    public static function instance() { return new self(); }
-    public function schedule_self_update(...$args) {
-        return new WP_Error('independent_release_required','Install an independently verified Unlimited release through WordPress. Upstream self-updates are disabled.',array('status'=>403));
-    }
-}

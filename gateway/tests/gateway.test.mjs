@@ -1,10 +1,11 @@
+import {DEFAULT_SITES,seed} from './registry-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import gateway from '../src/index.js';
 import { canonicalURL, endpoints, open } from '../src/security.js';
-import { DEFAULT_SITES, connection, credentialScope, resolve, saveTokens, seed } from '../src/store.js';
+import { connection, credentialScope, resolve, saveTokens } from '../src/store.js';
 import { UPSTREAM_TOOLS } from '../src/upstream-tools.generated.js';
 
 const origin='https://central-gateway.chatgpt.site',user='owner',originalFetch=globalThis.fetch;
@@ -23,6 +24,7 @@ function db() {
   const sql=new DatabaseSync(':memory:');
   const migration=readFileSync(new URL('../drizzle/0000_multisite.sql',import.meta.url),'utf8');
   sql.exec('PRAGMA foreign_keys=ON');sql.exec(migration);sql.exec(migration);
+  sql.exec(readFileSync(new URL('../drizzle/0002_connection_observations.sql',import.meta.url),'utf8'));
   function prepare(query) { return {bind(...args) {return {query,args,async first(){return sql.prepare(query).get(...args)||null;},async all(){return {results:sql.prepare(query).all(...args)};},async run(){const x=sql.prepare(query).run(...args);return {meta:{changes:Number(x.changes)}};}};}}; }
   return {sql,prepare,async batch(statements){sql.exec('BEGIN');try{const result=[];for(const s of statements) result.push(await s.run());sql.exec('COMMIT');return result;}catch(e){sql.exec('ROLLBACK');throw e;}}};
 }
@@ -35,6 +37,11 @@ async function env() {
 function request(path,body,who=user) {return new Request(origin+path,{method:'POST',headers:{'content-type':'application/json',origin,...(who?{'oai-authenticated-user-id':who}:{})},body:JSON.stringify(body)});}
 async function rpc(e,name,args,who=user) {const r=await gateway.fetch(request('/mcp',{jsonrpc:'2.0',id:7,method:'tools/call',params:{name,arguments:args}},who),e);return {response:r,body:await r.json()};}
 function response(body,status=200) {return new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});}
+function readinessFixture(url) {
+  const u=new URL(url);
+  if(u.pathname==='/wp-json/')return response({namespaces:['wp/v2','unlimited-wp-mcp-next/v1']});
+  if(u.pathname.endsWith('/connection/preflight'))return response({plugin:'unlimited-wp-mcp-next',site_url:u.origin,challenge:u.searchParams.get('challenge'),https:true,oauth_available:true,authorization_seen:true,oauth:{issuer:u.origin+'/wp-json/unlimited-wp-mcp-next/v1/oauth',token_endpoint:u.origin+'/wp-json/unlimited-wp-mcp-next/v1/oauth/token'}});
+}
 function approvalResponse(site=B) {return response({jsonrpc:'2.0',id:1,result:{isError:true,content:[{type:'text',text:JSON.stringify({code:'approval_required',message:'Review',data:{status:409,approval_id:approval,expires:Math.floor(Date.now()/1000)+600,approval_url:site.canonical_url+'/wp-admin/admin.php?page=unlimited-wp-mcp-next&approval='+approval}})}]}});}
 async function issue(e,site=B) {globalThis.fetch=async()=>approvalResponse(site);const result=await rpc(e,'content_edit',{site:site.alias,target_type:'post',post_id:123,old_content:'before',new_content:'after'});assert.ok(result.body.result?.isError,'Fixture must reach approval gate');assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM approval_scopes').get().n,1);return result;}
 
@@ -52,20 +59,52 @@ for(const wrongPage of ['unlimited-wp-mcp','wpvibe']) test('reject approval for 
   assert.equal(count,1);assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM approval_scopes').get().n,0);
 });
 
-test('one shared 51-tool catalog plus WPVibe-equivalent site management, explicit site on WordPress tools',async()=>{
+test('public catalog advertises baseline compatibility names and retains site management',async()=>{
   const e=await env(),r=await gateway.fetch(request('/mcp',{jsonrpc:'2.0',id:1,method:'tools/list'},''),e),body=await r.json();
-  assert.equal(body.result.tools.length,54);assert.equal(UPSTREAM_TOOLS.length,51);
+  assert.equal(body.result.tools.length,28);assert.equal(UPSTREAM_TOOLS.length,51);
   assert.equal(UPSTREAM_TOOLS.filter(t=>t.annotations?.readOnlyHint).length,29);
-  for(const t of body.result.tools.filter(t=>!['connect_site','list_sites','remove_site'].includes(t.name))) assert.ok(t.inputSchema.required.includes('site'));
+  for(const t of body.result.tools.filter(t=>!['connect_site','list_sites','remove_site','load_skill','search_images'].includes(t.name))) assert.ok(t.inputSchema.required.includes('site_url'));
   assert.deepEqual(body.result.tools.filter(t=>['connect_site','list_sites','remove_site'].includes(t.name)).map(t=>t.name),['connect_site','list_sites','remove_site']);
   assert.ok(body.result.tools.some(t=>t.name==='delete_draft_theme' && !t.annotations.readOnlyHint));
 });
-test('idempotent schema and registry seeding preserve populated credentials and disabled state',async()=>{
+test('test-only registry fixtures preserve populated credentials and disabled state',async()=>{
   const e=await env(),before=e.DB.sql.prepare('SELECT * FROM oauth_connections').all();
   e.DB.sql.prepare('UPDATE sites SET enabled=0 WHERE site_id=?').run(B.site_id);
   await seed(e,user);assert.deepEqual(e.DB.sql.prepare('SELECT * FROM oauth_connections').all(),before);
   assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM sites').get().n,2);
   await assert.rejects(()=>resolve(e,user,B.alias),/disabled/);
+});
+
+test('fresh production home and list do not seed example sites for any user',async()=>{
+  const e={DB:db(),OAUTH_ENCRYPTION_KEY:Buffer.alloc(32,19).toString('base64')};
+  globalThis.fetch=()=>assert.fail('Empty registry requires no remote requests');
+  for(const who of [user,'other-user']) {
+    for(let n=0;n<2;n++) {
+      assert.equal((await gateway.fetch(new Request(origin+'/',{headers:{'oai-authenticated-user-id':who}}),e)).status,200);
+      assert.deepEqual(JSON.parse((await rpc(e,'list_sites',{},who)).body.result.content[0].text),[]);
+    }
+  }
+  assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM sites').get().n,0);
+});
+
+test('legacy seed cleanup removes only untouched unauthorized fixtures and is idempotent',async()=>{
+  const e={DB:db()};await seed(e,user);await seed(e,'different-owner');
+  // Preserve a real connection, a renamed fixture and any real URL reusing an old ID.
+  await saveTokens({...e,OAUTH_ENCRYPTION_KEY:Buffer.alloc(32,19).toString('base64')},user,B,'client',{access_token:'test',refresh_token:'test'});
+  e.DB.sql.prepare('UPDATE sites SET canonical_url=? WHERE user_id=? AND site_id=?').run('https://real.agency.com','different-owner',A.site_id);
+  e.DB.sql.prepare('UPDATE sites SET display_name=? WHERE user_id=? AND site_id=?').run('Renamed','different-owner',B.site_id);
+  const migration=readFileSync(new URL('../drizzle/0003_remove_example_seeds.sql',import.meta.url),'utf8');
+  e.DB.sql.exec('BEGIN');e.DB.sql.exec(migration);e.DB.sql.exec('COMMIT');
+  assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM sites').get().n,3);
+  assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM oauth_connections').get().n,1);
+  assert.equal(e.DB.sql.prepare('SELECT count(*) AS n FROM site_aliases WHERE user_id=? AND site_id=?').get(user,A.site_id).n,0);
+  const before=e.DB.sql.prepare('SELECT * FROM sites').all();e.DB.sql.exec(migration);
+  assert.deepEqual(e.DB.sql.prepare('SELECT * FROM sites').all(),before);
+});
+
+test('gateway initialization reports the release version',async()=>{
+  const e={DB:db()},r=await gateway.fetch(request('/mcp',{jsonrpc:'2.0',id:1,method:'initialize'},''),e);
+  assert.equal((await r.json()).result.serverInfo.version,'2.0.1');
 });
 for(const site of [A,B]) test(site.alias+' routes only its credential to its canonical endpoint',async()=>{
   const e=await env();let count=0;
@@ -88,7 +127,7 @@ test('aliases resolve stable IDs; duplicates roll back; ambiguous ID/alias rejec
   e.DB.sql.prepare('INSERT INTO site_aliases VALUES(?,?,?)').run(user,A.site_id,B.site_id);
   await assert.rejects(()=>resolve(e,user,A.site_id),/ambiguous/);
 });
-for(const url of ['http://original.example.com','https://original.example.com:443','https://original.example.com:8443','https://localhost','https://127.0.0.1','https://10.0.0.1','https://[::1]','https://%63onsciouslyawesome.com','https://original.example.com@evil.com','https://original.example.com/path','https://original.example.com?x=1','https://original.example.com.','https://site.internal']) test('reject malformed/private URL '+url,()=>assert.throws(()=>canonicalURL(url)));
+for(const url of ['http://original.example.com','https://original.example.com:443','https://original.example.com:8443','https://localhost','https://127.0.0.1','https://10.0.0.1','https://[::1]','https://%63onsciouslyawesome.com','https://original.example.com@evil.com','https://original.example.com/path/../escape','https://original.example.com?x=1','https://original.example.com.','https://site.internal']) test('reject malformed/private URL '+url,()=>assert.throws(()=>canonicalURL(url)));
 test('mixed-case and trailing slash normalize at registration; noncanonical database records rejected',async()=>{
   assert.equal(canonicalURL('https://Original.Example.com/'),A.canonical_url);
   const e=await env();e.DB.sql.prepare('UPDATE sites SET canonical_url=? WHERE site_id=?').run('https://Booking.ConsciouslyAwesome.com/',B.site_id);
@@ -147,7 +186,7 @@ test('list_sites and audit omit token material and approval identifiers',async()
 });
 test('OAuth connect pins site, PKCE, callback and encrypted per-site flow',async()=>{
   const e=await env();let count=0;
-  globalThis.fetch=async(url,init)=>{count++;assert.equal(String(url),endpoints(B).register);assert.equal(init.redirect,'manual');assert.deepEqual(JSON.parse(init.body).redirect_uris,[origin+'/oauth/callback']);return response({client_id:'oauth-booking'});};
+  globalThis.fetch=async(url,init)=>{const ready=readinessFixture(url);if(ready)return ready;count++;assert.equal(String(url),endpoints(B).register);assert.equal(init.redirect,'manual');assert.deepEqual(JSON.parse(init.body).redirect_uris,[origin+'/oauth/callback']);return response({client_id:'oauth-booking'});};
   const r=await gateway.fetch(new Request(origin+'/oauth/connect',{method:'POST',headers:{origin,'oai-authenticated-user-id':user},body:new URLSearchParams({site:B.alias})}),e);
   assert.equal(r.status,200);assert.equal(r.headers.get('referrer-policy'),'no-referrer');
   assert.match(r.headers.get('content-security-policy'),/form-action 'self'/);
@@ -156,14 +195,35 @@ test('OAuth connect pins site, PKCE, callback and encrypted per-site flow',async
   assert.equal(target.origin,B.canonical_url);assert.equal(target.searchParams.get('code_challenge_method'),'S256');assert.equal(target.searchParams.get('resource'),endpoints(B).mcp);
   const f=e.DB.sql.prepare('SELECT * FROM oauth_flows').get();assert.equal(f.site_id,B.site_id);assert.equal(f.canonical_url,B.canonical_url);assert.equal(count,1);
   // Complete a synthetic callback and prove state is single use.
-  globalThis.fetch=async(url)=>String(url)===endpoints(B).token?response({access_token:'oauth-a',refresh_token:'oauth-r',expires_in:3600}):response({result:{content:[{type:'text',text:'identity'}]}});
+  globalThis.fetch=async(url,init)=>String(url)===endpoints(B).token?response({access_token:'oauth-a',refresh_token:'oauth-r',expires_in:3600}):response({id:JSON.parse(init.body).id,result:{content:[{type:'text',text:JSON.stringify({site_url:B.canonical_url,connected_user:{caps:{manage_options:true,edit_theme_options:true}}})}]}});
   const cb=origin+'/oauth/callback?code=fixture&state='+target.searchParams.get('state');
   assert.equal((await gateway.fetch(new Request(cb,{headers:{'oai-authenticated-user-id':user}}),e)).status,200);
   assert.equal((await gateway.fetch(new Request(cb,{headers:{'oai-authenticated-user-id':user}}),e)).status,400);
 });
+test('explicit reconnect replaces only the selected cached client and pending PKCE flow',async()=>{
+  const e=await env(),issuer=endpoints(B).issuer;
+  const client=n=>Buffer.from(JSON.stringify({issuer,nonce:n})).toString('base64url')+'.fixture';
+  e.DB.sql.prepare('INSERT INTO oauth_clients(user_id,site_id,client_id,redirect_uri,created_at) VALUES(?,?,?,?,?)').run(user,B.site_id,client('stale'),origin+'/oauth/callback',1);
+  e.DB.sql.prepare('INSERT INTO oauth_clients(user_id,site_id,client_id,redirect_uri,created_at) VALUES(?,?,?,?,?)').run(user,A.site_id,'unrelated',origin+'/oauth/callback',1);
+  const snapshot=table=>e.DB.sql.prepare('SELECT * FROM '+table+' ORDER BY rowid').all();
+  const sites=snapshot('sites'),aliases=snapshot('site_aliases'),grants=snapshot('oauth_connections'),other=snapshot('oauth_clients').find(c=>c.site_id===A.site_id);
+  let registrations=0;
+  globalThis.fetch=async(url,init)=>{const ready=readinessFixture(url);if(ready)return ready;assert.equal(String(url),endpoints(B).register);registrations++;assert.deepEqual(JSON.parse(init.body).redirect_uris,[origin+'/oauth/callback']);return response({client_id:client(registrations)});};
+  const reconnect=async()=>{
+    const r=await gateway.fetch(new Request(origin+'/oauth/connect',{method:'POST',headers:{origin,'oai-authenticated-user-id':user},body:new URLSearchParams({site:B.alias})}),e);
+    assert.equal(r.status,200);const html=await r.text(),href=html.match(/href="([^"]+client_id=[^"]+)"/)[1].replaceAll('&amp;','&');return new URL(href);
+  };
+  const first=await reconnect(),flow1=snapshot('oauth_flows')[0],second=await reconnect(),flow2=snapshot('oauth_flows')[0];
+  assert.equal(registrations,2);assert.equal(second.searchParams.get('client_id'),client(2));assert.equal(second.searchParams.get('code_challenge_method'),'S256');
+  assert.notEqual(first.searchParams.get('state'),second.searchParams.get('state'));assert.notEqual(first.searchParams.get('code_challenge'),second.searchParams.get('code_challenge'));
+  assert.notEqual(flow1.state_hash,flow2.state_hash);assert.notEqual(flow1.verifier_ciphertext,flow2.verifier_ciphertext);assert.equal(snapshot('oauth_flows').length,1);
+  assert.deepEqual(snapshot('sites'),sites);assert.deepEqual(snapshot('site_aliases'),aliases);assert.deepEqual(snapshot('oauth_connections'),grants);
+  assert.deepEqual(snapshot('oauth_clients').find(c=>c.site_id===A.site_id),other);
+});
+
 test('connect_site registers an arbitrary Next site and returns one-click authorization URL',async()=>{
   const e=await env(),url='https://reg.consciouslyawesome.com';let calls=0;
-  globalThis.fetch=async(target,init)=>{calls++;assert.equal(String(target),url+'/wp-json/unlimited-wp-mcp-next/v1/oauth/register-path');assert.equal(init.redirect,'manual');return response({client_id:'oauth-reg'});};
+  globalThis.fetch=async(target,init)=>{const ready=readinessFixture(target);if(ready)return ready;calls++;assert.equal(String(target),url+'/wp-json/unlimited-wp-mcp-next/v1/oauth/register-path');assert.equal(init.redirect,'manual');return response({client_id:'oauth-reg'});};
   const x=await rpc(e,'connect_site',{site_url:url});assert.ok(x.body.result);assert.equal(calls,1);
   const data=JSON.parse(x.body.result.content[0].text);assert.equal(data.site_url,url);assert.equal(data.alias,'reg');assert.equal(data.status,'authorization_required');
   const auth=new URL(data.authorization_url);assert.equal(auth.origin,url);assert.equal(auth.pathname,'/wp-admin/admin-post.php');assert.equal(auth.searchParams.get('action'),'uwnext_authorize');assert.equal(auth.searchParams.get('code_challenge_method'),'S256');
@@ -175,6 +235,14 @@ test('connect_site is idempotent for an already connected site',async()=>{
   const e=await env();globalThis.fetch=()=>assert.fail('Existing connection should not start OAuth');
   const x=await rpc(e,'connect_site',{site_url:B.canonical_url});const data=JSON.parse(x.body.result.content[0].text);
   assert.equal(data.status,'connected');assert.equal(data.site_id,B.site_id);assert.equal(data.alias,B.alias);
+});
+
+test('connect_site does not claim connected for mismatched stored credential URL',async()=>{
+  const e=await env();
+  e.DB.sql.prepare('UPDATE oauth_connections SET canonical_url=? WHERE user_id=? AND site_id=?').run('https://old.agency.com',user,B.site_id);
+  globalThis.fetch=async(url)=>readinessFixture(url)||response({client_id:'new-client'});
+  const result=await rpc(e,'connect_site',{site_url:B.canonical_url});
+  assert.equal(JSON.parse(result.body.result.content[0].text).status,'authorization_required');
 });
 
 test('remove_site removes local registry and attempts WordPress revocation',async()=>{

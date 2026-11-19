@@ -9,7 +9,7 @@ labels: bug
 
 - **WordPress version:**
 - **PHP version:**
-- **UWNext plugin version:** *(shown as "Vibe AI" in your wp-admin plugins list)*
+- **UWNext plugin version:** *(shown as "Unlimited WP MCP Next" in your wp-admin plugins list)*
 - **AI client and version:** (e.g., Claude Desktop 0.7.2, Cursor 0.42, Claude Code 2.0)
 - **Hosting / server:** (e.g., GoDaddy Managed WP, WP Engine, Kinsta, local Herd / LocalWP, VPS)
 

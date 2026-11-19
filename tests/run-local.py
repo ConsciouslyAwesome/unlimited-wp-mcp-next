@@ -27,7 +27,7 @@ shutil.copy2(core/'wp-content/db.php', content/'db.php')
 shutil.copytree(core/'wp-content/themes/twentytwentyfive', content/'themes/twentytwentyfive', dirs_exist_ok=True)
 plugin = content/'plugins/unlimited-wp-mcp-next'
 shutil.copytree(repo, plugin, dirs_exist_ok=True, ignore=shutil.ignore_patterns('.git','tests'))
-php = workspace/'.runtime/php/php.exe'
+php = Path(os.environ.get('PHP_BINARY', workspace/'.runtime/php/php.exe')).resolve()
 lint=[]
 for path in sorted(repo.rglob('*.php')):
     result=subprocess.run([str(php),'-l',str(path)],capture_output=True,text=True)
