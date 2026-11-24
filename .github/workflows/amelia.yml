@@ -9,6 +9,7 @@ jobs:
   guards:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         php: ['8.1', '8.3']
     steps:
@@ -22,9 +23,12 @@ jobs:
       - name: PHP syntax
         run: find includes tests -name '*.php' -print0 | xargs -0 -n1 php -l
       - name: Amelia guard tests
-        run: php tests/amelia.php
+        run: |
+          php tests/amelia.php
+          php tests/amelia-native.php
       - name: Existing standalone regression tests
         run: |
+          mkdir -p ../.runtime
           php tests/approvals.php
           php tests/approvals.php sql
           php tests/connection.php
