@@ -72,9 +72,14 @@ jobs:
           node --test tests/acceptance-routing.test.mjs
           node --test tests/acceptance-wordpress-routing.mjs
           python tests/acceptance-audit.py
+      - name: Collect fixture test evidence
+        if: always()
+        run: |
+          mkdir -p ci-evidence
+          cp -a ../audit/next-generation/. ci-evidence/
       - name: Preserve fixture test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: wordpress-regression-evidence
-          path: ../audit/next-generation
+          path: ci-evidence
