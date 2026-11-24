@@ -33,6 +33,7 @@ require_once __DIR__ . '/includes/trait-uwnext-request-detach.php';
 require_once __DIR__ . '/includes/class-uwnext-self-update.php';
 require_once __DIR__ . '/includes/class-uwnext-update-source.php';
 require_once __DIR__ . '/includes/local-capabilities.php';
+require_once __DIR__ . '/includes/class-uwnext-amelia.php';
 require_once __DIR__ . '/includes/local-jobs.php';
 require_once __DIR__ . '/includes/local-resources.php';
 foreach (array('error-contract','svg-sanitizer','builder-login','timing','output-guard','file-ops','content-files','content-ops','draft-lock','draft-theme','preview','cli','code-snippet','change-tracker','live-reload','classic-theme','php-guard','rest','elementor','beaver','breakdance','bricks') as $uwnext_module) {

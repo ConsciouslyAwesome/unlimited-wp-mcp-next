@@ -1,4 +1,5 @@
 import { UPSTREAM_TOOLS } from './upstream-tools.generated.js';
+import { AMELIA_TOOLS, ameliaCatalog } from './amelia.js';
 import { compatibilityCatalog, translate } from './compatibility.js';
 import { loadSkill, searchImages } from './resource-compatibility.js';
 import { preflight, verifySiteRead, observe, currentObservation } from './connection-readiness.js';
@@ -6,7 +7,7 @@ import { alias, canonicalURL, Denied, endpoints, fetchJSON, hash, open, random, 
 import { all, bindApproval, connection, consumeApproval, credentialScope, first, resolve, run, saveTokens, stmt } from './store.js';
 
 const NAME='Unlimited WP MCP Next — Multi-Site';
-const tools=new Map(UPSTREAM_TOOLS.map(t=>[t.name,t]));
+const tools=new Map([...UPSTREAM_TOOLS,...AMELIA_TOOLS].map(t=>[t.name,t]));
 const json=(b,status=200)=>new Response(JSON.stringify(b),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
 const identity=r=>r.headers.get('oai-authenticated-user-id')||'';
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -35,6 +36,7 @@ async function siteList(env,user) {
 function catalog() {
   return [
     ...compatibilityCatalog(),
+    ...ameliaCatalog(),
     {name:'connect_site',description:'Connect a WordPress site. Call with just site_url first. Registers the site in this Unlimited gateway when needed and returns a one-click WordPress authorization link. After authorization the site stays connected to this gateway.',inputSchema:{type:'object',properties:{site_url:{type:'string',description:'Public HTTPS WordPress site URL.'}},required:['site_url'],additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false}},
     {name:'list_sites',description:'List registered WordPress sites, aliases and connection state without credentials.',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true,destructiveHint:false}},
     {name:'remove_site',description:'Remove a WordPress site from this Unlimited gateway. Deletes the stored local connection and attempts to revoke the WordPress OAuth grant.',inputSchema:{type:'object',properties:{site_url:{type:'string',description:'Public HTTPS WordPress site URL.'}},required:['site_url'],additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:true}}
