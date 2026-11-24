@@ -31,6 +31,7 @@ jobs:
           mkdir -p ../.runtime
           php tests/approvals.php
           php tests/approvals.php sql
+          php tests/approvals.php amelia
           php tests/connection.php
           php tests/updates.php
           php tests/update-recovery.php

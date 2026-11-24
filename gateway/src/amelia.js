@@ -10,8 +10,8 @@ const mutation={
 export const AMELIA_TOOLS=[
   ['get_appointment',true,{appointment_id:id},['appointment_id']],
   ['preview_appointment',true,{...mutation,internal_notes:{type:'string',maxLength:10000}},['appointment_id','expected_state']],
-  ['reschedule_appointment',false,mutation,['appointment_id','expected_state','new_start','timezone']],
-  ['update_appointment',false,{...mutation,internal_notes:{type:'string',maxLength:10000}},['appointment_id','expected_state']],
+  ['reschedule_appointment',false,{...mutation,dry_run:{type:'boolean',default:true}},['appointment_id','expected_state','new_start','timezone']],
+  ['update_appointment',false,{...mutation,internal_notes:{type:'string',maxLength:10000},dry_run:{type:'boolean',default:true}},['appointment_id','expected_state']],
 ].map(([suffix,read,properties,required])=>({
   name:'amelia_'+suffix,
   description:'Amelia 9.10 '+suffix.replaceAll('_',' ')+'. Target a registered site explicitly. Retrieve expected_state before previewing or editing. Only time and internal notes are supported. notify_participants=false is rejected because Amelia may notify employees. Unsupported installations reject the operation. '+(read?'Read operation.':'Requires exact-operation WordPress browser approval; inspect the receipt after uncertainty.'),

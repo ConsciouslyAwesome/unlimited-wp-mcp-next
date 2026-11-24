@@ -89,6 +89,8 @@ final class UWNext_Tools {
     public static function call($name,$args) {
         $all=self::definitions(); if(!isset($all[$name])) { return self::deny('unknown_tool','Unknown tool.',400); }
         $tool=$all[$name]; $valid=self::validate($tool,$args); if(is_wp_error($valid)) { return $valid; }
+        // Optional Amelia dry runs are read-only even though the operation can mutate.
+        if(in_array($name,array('amelia_reschedule_appointment','amelia_update_appointment'),true) && ($args['dry_run']??true)) { $tool['read']=true; }
         if(isset($tool['route']) && str_starts_with($tool['route'],'/file/')) {
             foreach(array('path','directory') as $key) {
                 if(isset($args[$key]) && (preg_match('/[\x00-\x1f\x7f\\\\:]/',$args[$key]) || str_starts_with($args[$key],'/') || preg_match('#(?:^|/)\.\.?(/|$)#',$args[$key]))) { return self::deny('path_traversal','Use a clean relative path inside the file sandbox.'); }

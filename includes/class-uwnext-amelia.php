@@ -29,6 +29,7 @@ final class UWNext_Amelia {
                 if ($operation !== 'reschedule-appointment') {
                     $args['internal_notes'] = array('type'=>'string','maxLength'=>10000);
                 } else { $args['new_start']['required']=true; $args['timezone']['required']=true; }
+                if (!$read) { $args['dry_run']=array('type'=>'boolean','default'=>true); }
             }
             uwnext_register_internal_route(UWNext_NS, '/amelia/'.$operation, array(
                 'methods'=>$read?'GET':'POST', 'permission_callback'=>$permission, 'args'=>$args,
@@ -150,7 +151,7 @@ final class UWNext_Amelia {
         } elseif ($request['timezone'] !== null) { return self::error('start_required','timezone requires new_start.',400); }
         if ($request['internal_notes'] !== null) { $fields['internalNotes']=$request['internal_notes']; }
         if ($request['new_start'] === null && $request['internal_notes'] === null) { return self::error('empty_patch','Provide a start time or internal notes.',400); }
-        // Candidate retains the existing ID, so Amelia excludes the appointment from its own busy intervals.
+        // Retain the existing ID for native self-conflict handling; verify exclusion on staging.
         $available=$request['new_start'] === null || $container->get('application.booking.appointment.service')->canBeBooked($candidate,false,null,null);
         if (!$available) { return self::error('time_slot_unavailable','Amelia rejected the requested time. No change was made.'); }
         $preview=array('before'=>self::summary($old,$container),'after'=>self::summary($candidate,$container),
@@ -172,7 +173,7 @@ final class UWNext_Amelia {
             if ($operation === 'get-appointment') { return self::summary(self::load($container,(int)$request['appointment_id']),$container); }
             $prepared=self::prepare($request,$container);
             if (is_wp_error($prepared)) { return $prepared; }
-            if ($operation === 'preview-appointment') { return $prepared['preview']; }
+            if ($operation === 'preview-appointment' || $request['dry_run'] === true) { return $prepared['preview']; }
             if (!UWNext_Tools::executing()) { return self::error('approval_required','Use the exact-operation MCP approval workflow.'); }
             $started=true;
             $notesOnly=$request['new_start'] === null;

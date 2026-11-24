@@ -70,8 +70,9 @@ Example: read appointment 102, retain its `expected_state`, then preview:
 }
 ```
 
-Use `amelia_preview_appointment` as the dry run. Then call reschedule with the same
-arguments. Review the WordPress approval, and repeat with its `approval_id`.
+Use `amelia_preview_appointment` as the dry run, or call reschedule with `dry_run:true`
+(the default). For execution, set `dry_run:false`, review the WordPress approval,
+and repeat with the identical arguments plus its `approval_id`.
 The preview shows all affected booking/customer IDs, including group participants.
 The approval binds those exact arguments, site, connection and expected state.
 No appointment is canceled, recreated or reassigned by these tools.
@@ -101,6 +102,12 @@ for receipt lookup; a host termination may prevent a response altogether.
 - Keep approval payloads encrypted; audit statuses contain no appointment/customer payload.
 - Do not mutate the database directly or change any scheduling settings.
 
+The installed source reader limits individual source files to 64 KiB. The
+83,266-byte `AppointmentApplicationService.php` and 90,418-byte abilities registrar
+exceed that limit, so their implementation has not been fully inspected. Native
+self-exclusion, administrator slot-grid behavior and service conversion remain
+acceptance requirements, not conclusions inferred from calling `canBeBooked`.
+
 ## Draft critique and revisions
 
 Initial idea: use `UpdateAppointmentTimeCommand` alone. Critique: this omits the
@@ -121,8 +128,8 @@ category to pass with recorded execution evidence; mocks do not establish live b
 
 - [x] Inspect native container, command authorization, dispatcher, controller and event flow.
 - [x] Establish unchanged gateway baseline (124 tests passed locally).
-- [ ] Run new PHP guard tests and existing standalone PHP regressions in Actions.
-- [ ] Complete native command and approval fixture tests.
+- [x] Run initial PHP guards, orchestration doubles and standalone PHP regressions on PHP 8.1 and 8.3 in Actions (commit 2e77060a18af1959307854267fe9b86c063ff974).
+- [ ] Complete native command and approval fixture tests, including the subsequent dry-run and approval cases.
 - [ ] Verify staging blocks real email, SMS, WhatsApp, push, external HTTP and calendar writes.
 - [ ] Run synthetic appointment creation, preview, approval and rescheduling over actual MCP HTTP.
 - [ ] Verify buffers, hourly slot grid, resources, employee days off and external busy calendars.
@@ -145,7 +152,7 @@ category to pass with recorded execution evidence; mocks do not establish live b
 
 This is not release-ready. Employee/location changes, service changes and individual
 booking reassignment are not exposed. `notify_participants=false` is unsupported.
-Use the preview tool rather than a `dry_run` parameter. Package/recurrence/payment
+Package/recurrence/payment
 variants and external calendars require live acceptance. Only inspected 9.10 is
 supported; class presence is a compatibility check, not a claim that a licensed
 command can execute. The installed command map and native permissions remain final.

@@ -80,7 +80,7 @@ function reset_native() {
     $GLOBALS['mutations']=$GLOBALS['emissions']=0;$GLOBALS['site']='https://fixture.test';
 }
 function lookup() { return UWNext_Amelia::handle('get-appointment',array('appointment_id'=>102)); }
-function change_args() { return array('appointment_id'=>102,'expected_state'=>lookup()['expected_state'],'new_start'=>'2026-12-07 09:00','timezone'=>'America/New_York','notify_participants'=>true,'internal_notes'=>null); }
+function change_args() { return array('appointment_id'=>102,'expected_state'=>lookup()['expected_state'],'new_start'=>'2026-12-07 09:00','timezone'=>'America/New_York','notify_participants'=>true,'internal_notes'=>null,'dry_run'=>false); }
 try {
     reset_native();check(UWNext_Amelia::supported(),'Inspected profile enabled');
     $args=change_args();$preview=UWNext_Amelia::handle('preview-appointment',$args);
@@ -88,6 +88,9 @@ try {
     check(count($preview['affected_bookings'])===2,'Group preview identifies every booking');
     check($preview['after']['start_utc']==='2026-12-07T14:00:00+00:00','Preview UTC verified');
     check($preview['after']['buffer_after_seconds']===900,'Preview preserves native buffer');
+    $dryArgs=$args;$dryArgs['dry_run']=true;$executing=false;
+    check(!is_wp_error(UWNext_Amelia::handle('reschedule-appointment',$dryArgs)) && $mutations===0,'Dry run never requires write execution or mutates');
+    $executing=true;
     $out=UWNext_Amelia::handle('reschedule-appointment',$args);
     check(!is_wp_error($out) && $out['appointment_update']==='verified' && $mutations===1 && $emissions===1,'One native update and event');
     check($raw['id']===102 && array_column($raw['bookings'],'id')===array(6,8),'Identities preserved');

@@ -59,6 +59,38 @@ $passed=0;
 function check($ok,$label){global $passed;if(!$ok){throw new Exception('FAIL '.$label);}$passed++;echo "PASS $label\n";}
 function code($v,$expected){return is_wp_error($v)&&$v->get_error_code()===$expected;}
 
+if(($argv[1]??'')==='amelia') {
+    class UWNext_Amelia {
+        static function preview($request) {
+            return $request['expected_state']==='fresh'?array('affected_bookings'=>array(array('booking_id'=>6,'customer_id'=>7))):new WP_Error('appointment_state_changed','Fresh preview required');
+        }
+    }
+    $uid=7;UWNext_Auth::$connection='amelia-fixture';$can=true;$runs=0;
+    uwnext_register_internal_route(UWNext_NS,'/amelia/reschedule-appointment',array('methods'=>'POST',
+        'args'=>array('appointment_id'=>array('type'=>'integer','required'=>true),'expected_state'=>array('type'=>'string','required'=>true),'dry_run'=>array('type'=>'boolean','default'=>true)),
+        'permission_callback'=>function(){return true;},'callback'=>function($request) use (&$runs) {
+            if($request['dry_run']) { return array('preview'=>true); }
+            if($request['expected_state']!=='fresh') { return new WP_Error('appointment_state_changed','Changed'); }
+            $runs++;return array('appointment_update'=>'verified');
+        }));
+    $args=array('appointment_id'=>102,'expected_state'=>'fresh');
+    $out=UWNext_Tools::call('amelia_reschedule_appointment',$args);
+    check(($out['preview']??false)&&$runs===0,'Amelia defaults to non-mutating preview without approval');
+    $args['dry_run']=false;$out=UWNext_Tools::call('amelia_reschedule_appointment',$args);
+    check(code($out,'approval_required')&&$runs===0,'Amelia execution requests exact approval');
+    $id=$out->get_error_data()['approval_id'];$row=UWNext_Store::get('approval',$id);$payload=UWNext_Store::decrypt($row['payload']);
+    check(count($payload['preview']['affected_bookings'])===1,'Amelia approval includes affected bookings');
+    check(UWNext_Admin::approve($id,7),'Fixture human approves Amelia operation');
+    $other=$args;$other['appointment_id']=103;$other['approval_id']=$id;
+    check(code(UWNext_Tools::call('amelia_reschedule_appointment',$other),'approval_invalid')&&$runs===0,'Amelia approval cannot change appointment');
+    $args['approval_id']=$id;$out=UWNext_Tools::call('amelia_reschedule_appointment',$args);
+    check(($out['appointment_update']??'')==='verified'&&($out['operation_id']??'')===$id&&$runs===1,'Approved Amelia write returns matching receipt');
+    check(code(UWNext_Tools::call('amelia_reschedule_appointment',$args),'approval_invalid')&&$runs===1,'Amelia approval cannot replay');
+    $stale=array('appointment_id'=>102,'expected_state'=>'stale','dry_run'=>false);
+    check(code(UWNext_Tools::call('amelia_reschedule_appointment',$stale),'appointment_state_changed')&&$runs===1,'Stale Amelia preview cannot request approval');
+    echo "RESULT $passed Amelia approval checks passed\n";exit;
+}
+
 if(($argv[1]??'')==='sql'){
     require dirname(__DIR__).'/includes/class-uwnext-error-contract.php';
     require dirname(__DIR__).'/includes/class-uwnext-cli.php';
