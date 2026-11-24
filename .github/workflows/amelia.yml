@@ -26,6 +26,8 @@ jobs:
         run: |
           php tests/amelia.php
           php tests/amelia-native.php
+          php tests/staging-isolation.php
+          php tests/staging-isolation-transaction.php
       - name: Existing standalone regression tests
         run: |
           mkdir -p ../.runtime
