@@ -31,7 +31,7 @@ final class UWNext_Tools {
                 if($route==='/draft-theme') { $name=$method==='DELETE'?'delete_draft_theme':'create_draft_theme'; }
                 if($route==='/images/search') {$name='search_images';}
                 if($route==='/skill/load') {$name='load_skill';}
-                $read=in_array($route,self::READ,true) || in_array($route,array('/abilities','/images/search','/skill/load'),true);
+                $read=in_array($route,self::READ,true) || in_array($route,array('/abilities','/images/search','/skill/load','/amelia/get-appointment','/amelia/preview-appointment'),true);
                 $props=array(); $required=array();
                 foreach($def['args']??array() as $key=>$arg) {
                     if($key==='approved_state') { continue; }
@@ -49,6 +49,10 @@ final class UWNext_Tools {
                 $caps=array('can_manage_themes'=>'edit_theme_options','can_manage_options'=>'manage_options','can_edit_posts'=>'edit_posts','can_read_themes'=>'edit_themes (edit_theme_options on a locked single site)','can_read_files'=>'edit_themes for theme files; manage_options for wp-content; network administrator on multisite','can_edit_themes'=>'edit_themes; respects DISALLOW_FILE_EDIT and DISALLOW_FILE_MODS','can_publish_theme'=>'edit_themes and switch_themes','can_edit_content'=>'edit_post for the target post; manage_options for options','can_run_cli'=>'manage_options plus the command-specific capability','can_edit_code_snippets_approved'=>'wpcode_edit_snippets');
                 $cap=$caps[$callback]??(str_contains($route,'/ability') || $route==='/abilities'?'manage_options plus the ability permission callback':($route==='/upload-media'?'upload_files':'edit_post for target content plus the builder-specific permission callback'));
                 if(in_array($route,array('/images/search','/skill/load','/rest-api/read','/rest-api/write'),true)) {$cap='manage_options plus the native endpoint permission callback where applicable';}
+                if(str_starts_with($route,'/amelia/')) {
+                    $cap='manage_options plus Amelia-native appointment permissions';
+                    $desc=$label.'. Amelia 9.10 compatibility adapter. Appointment IDs and customer booking IDs are distinct. Retrieve expected_state before preview or mutation. Preview is non-mutating. Appointment time, internal notes, employee and location changes use the verified single-booking profile; silent employee notifications are not supported. '.($read?'Read operation.':'Exact-operation browser approval required.');
+                }
                 $desc.=' Requires '.$cap.'.';
                 $tools[$name]=array('name'=>$name,'description'=>$desc,'inputSchema'=>array('type'=>'object','properties'=>(object)$props,'required'=>$required,'additionalProperties'=>false),'annotations'=>array('readOnlyHint'=>$read,'destructiveHint'=>!$read,'idempotentHint'=>$read,'openWorldHint'=>true),'_meta'=>array('org.unlimitedwpmcp/permission'=>$cap),'route'=>$route,'method'=>$method,'def'=>$def,'read'=>$read);
             }
@@ -85,6 +89,12 @@ final class UWNext_Tools {
     public static function call($name,$args) {
         $all=self::definitions(); if(!isset($all[$name])) { return self::deny('unknown_tool','Unknown tool.',400); }
         $tool=$all[$name]; $valid=self::validate($tool,$args); if(is_wp_error($valid)) { return $valid; }
+        $amelia_ability=(class_exists('UWNext_Amelia')?UWNext_Amelia::ability_operation($name,$args):null);
+        if($amelia_ability!==null) {
+            $tool['read']=in_array($amelia_ability,array('get-appointment','preview-appointment'),true) || ($args['input']['dry_run']??true);
+        }
+        // Optional Amelia dry runs are read-only even though the operation can mutate.
+        if(in_array($name,array('amelia_reschedule_appointment','amelia_update_appointment'),true) && ($args['dry_run']??true)) { $tool['read']=true; }
         if(isset($tool['route']) && str_starts_with($tool['route'],'/file/')) {
             foreach(array('path','directory') as $key) {
                 if(isset($args[$key]) && (preg_match('/[\x00-\x1f\x7f\\\\:]/',$args[$key]) || str_starts_with($args[$key],'/') || preg_match('#(?:^|/)\.\.?(/|$)#',$args[$key]))) { return self::deny('path_traversal','Use a clean relative path inside the file sandbox.'); }
@@ -156,15 +166,32 @@ final class UWNext_Tools {
                     : $cli->run($req['command'],(bool)$req['confirm_write']));
             } else { self::$executing=!$tool['read']; $out=call_user_func($def['callback'],$req); }
             $failed=is_wp_error($out) || ($out instanceof WP_REST_Response && ($out->get_status()>=400 || (!empty($out->get_data()['exit_code']))));
-            UWNext_Store::log($name,$failed?'failed':'completed',$op);
+            $uncertain=is_wp_error($out) && in_array($out->get_error_code(),array('amelia_operation_uncertain','amelia_verification_uncertain'),true);
+            UWNext_Store::log($name,$uncertain?'uncertain':($failed?'failed':'completed'),$op);
+            if((str_starts_with($name,'amelia_') || $amelia_ability!==null) && !$tool['read']) {
+                if(is_wp_error($out)) { $out=new WP_Error($out->get_error_code(),$out->get_error_message(),array_merge((array)$out->get_error_data(),array('operation_id'=>$op))); }
+                elseif(is_array($out)) { $out['operation_id']=$op; }
+            }
             return $out;
         } catch(Throwable $error) {
+            if(str_starts_with($name,'amelia_') || $amelia_ability!==null) {
+                UWNext_Store::log($name,'uncertain',$op);
+                return new WP_Error('amelia_operation_uncertain','Execution was interrupted. Inspect this receipt and the current appointment before any new write.',array('status'=>503,'operation_id'=>$op));
+            }
             UWNext_Store::log($name,'host_failure',$op);
             return self::deny('host_failure','WordPress could not complete the operation. Inspect the local receipt before retrying a write.',503);
         } finally { UWNext_Approval_Bypass::$request_bypassed=false;self::$executing=false; if($lock && get_option('uwnext_write_lock')===$op) { delete_option('uwnext_write_lock'); } }
     }
     public static function request_approval($name,$args,$request) {
         $preview=null;
+        $amelia_ability=(class_exists('UWNext_Amelia')?UWNext_Amelia::ability_operation($name,$args):null);
+        if($amelia_ability!==null) {
+            $native_request=new WP_REST_Request('POST');$native_request->set_body_params($args['input']);
+            $preview=UWNext_Amelia::preview($native_request);if(is_wp_error($preview)){return $preview;}
+        }
+        if(str_starts_with($name,'amelia_')) {
+            $preview=UWNext_Amelia::preview($request);if(is_wp_error($preview)){return $preview;}
+        }
         if(in_array($name,array('draft_theme_publish','delete_draft_theme'),true)) {
             $preview=self::theme_snapshot();if(is_wp_error($preview)){return $preview;}
         }

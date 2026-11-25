@@ -1,0 +1,87 @@
+name: Amelia adapter
+on:
+  pull_request:
+  push:
+    branches: [codex/amelia-native-management]
+permissions:
+  contents: read
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.3']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: PHP syntax
+        run: find includes tests -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Amelia guard tests
+        run: |
+          php tests/amelia.php
+          php tests/amelia-native.php
+          php tests/staging-isolation.php
+          php tests/staging-isolation-transaction.php
+      - name: Existing standalone regression tests
+        run: |
+          mkdir -p ../.runtime
+          php tests/approvals.php
+          php tests/approvals.php sql
+          php tests/approvals.php amelia
+          php tests/connection.php
+          php tests/updates.php
+          php tests/update-recovery.php
+      - name: Gateway regression tests
+        run: node --test gateway/tests/*.test.mjs
+  wordpress:
+    name: Existing WordPress integration (6.9 / SQLite 2.2.9)
+    runs-on: ubuntu-latest
+    env:
+      PHP_BINARY: /usr/bin/php
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_sqlite, sqlite3, openssl, mbstring
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare pinned disposable runtime
+        run: |
+          mkdir -p ../.runtime ../audit/next-generation
+          curl --fail --location --proto '=https' --tlsv1.2 https://wordpress.org/wordpress-6.9.tar.gz -o ../.runtime/wordpress.tar.gz
+          curl --fail --location --proto '=https' --tlsv1.2 https://downloads.wordpress.org/plugin/sqlite-database-integration.2.2.9.zip -o ../.runtime/sqlite.zip
+          sha256sum ../.runtime/wordpress.tar.gz ../.runtime/sqlite.zip > ../audit/next-generation/dependencies.sha256
+          tar -xzf ../.runtime/wordpress.tar.gz -C ../.runtime
+          unzip -q ../.runtime/sqlite.zip -d ../.runtime/wordpress/wp-content/plugins
+          cp ../.runtime/wordpress/wp-content/plugins/sqlite-database-integration/db.copy ../.runtime/wordpress/wp-content/db.php
+      - name: Full existing WordPress regression suite
+        run: python tests/run-local.py
+      - name: Verify native catalog remains unchanged without Amelia
+        run: python tests/generate-catalog.py --check
+      - name: Routing and source acceptance
+        run: |
+          node --test tests/acceptance-routing.test.mjs
+          node --test tests/acceptance-wordpress-routing.mjs
+          python tests/acceptance-audit.py
+      - name: Collect fixture test evidence
+        if: always()
+        run: |
+          mkdir -p ci-evidence
+          cp -a ../audit/next-generation/. ci-evidence/
+      - name: Preserve fixture test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordpress-regression-evidence
+          path: ci-evidence

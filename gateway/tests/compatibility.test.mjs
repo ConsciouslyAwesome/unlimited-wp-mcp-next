@@ -27,7 +27,7 @@ function required(){return response({result:{isError:true,content:[{type:'text',
 test('catalog contains all 26 GPL README names, native code_snippet and retained receipts',async()=>{
   const documented=['connect_site','site_info','list_sites','remove_site','rest_api','upload_media','search_images','discover_abilities','get_ability_info','run_ability','read_file','edit_file','write_file','delete_file','list_files','search_files','get_file_outline','create_draft_theme','publish_draft_theme','delete_draft_theme','get_preview_url','create_classic_theme','run_wp_cli','get_page_html','navigate','load_skill'];
   const env=await environment();const r=await gateway.fetch(new Request(origin+'/mcp',{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})}),env);
-  const {result:{tools}}=await r.json();assert.equal(tools.length,28);assert.equal(new Set(tools.map(t=>t.name)).size,28);
+  const {result:{tools}}=await r.json();assert.equal(tools.length,32);assert.equal(new Set(tools.map(t=>t.name)).size,32);
   for(const name of documented)assert.ok(tools.some(t=>t.name===name),name);
   for(const name of ['cli_run','file_read','rest_api_read','rest_api_write','ability_info','draft_theme_publish','show_fleet_dashboard','start_fleet_job','use_usage_reset'])assert.ok(!tools.some(t=>t.name===name),name);
   for(const t of compatibilityCatalog()){assert.equal(t.inputSchema.properties.site,undefined);assert.equal(t.inputSchema.properties.approval_id,undefined);}

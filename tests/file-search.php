@@ -111,7 +111,9 @@ try {
 		'max_results' => 1,
 		'case_sensitive' => true,
 	) ) );
-	check( 1 === $one['total_matches'] && '00-match.css' === $one['matches'][0]['file'], 'file_search still returns valid matches' );
+	// Directory iteration order differs across filesystems; both files contain the same valid match.
+	check( 1 === $one['total_matches'] && in_array( $one['matches'][0]['file'], array( '00-match.css', '01-late.css' ), true )
+		&& 1 === $one['matches'][0]['line'] && str_contains( $one['matches'][0]['content'], 'file-search-valid-match' ), 'file_search still returns valid matches' );
 	check( $one['truncated'] && count( $wp_filesystem->reads ) < 6, 'max_results=1 short-circuits traversal after the first match' );
 } finally {
 	$wp_filesystem = $old_fs;

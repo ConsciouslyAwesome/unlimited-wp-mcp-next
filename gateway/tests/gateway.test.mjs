@@ -61,12 +61,44 @@ for(const wrongPage of ['unlimited-wp-mcp','wpvibe']) test('reject approval for 
 
 test('public catalog advertises baseline compatibility names and retains site management',async()=>{
   const e=await env(),r=await gateway.fetch(request('/mcp',{jsonrpc:'2.0',id:1,method:'tools/list'},''),e),body=await r.json();
-  assert.equal(body.result.tools.length,28);assert.equal(UPSTREAM_TOOLS.length,51);
+  assert.equal(body.result.tools.length,32);assert.equal(UPSTREAM_TOOLS.length,51);
   assert.equal(UPSTREAM_TOOLS.filter(t=>t.annotations?.readOnlyHint).length,29);
-  for(const t of body.result.tools.filter(t=>!['connect_site','list_sites','remove_site','load_skill','search_images'].includes(t.name))) assert.ok(t.inputSchema.required.includes('site_url'));
+  for(const t of body.result.tools.filter(t=>!t.name.startsWith('amelia_')&&!['connect_site','list_sites','remove_site','load_skill','search_images'].includes(t.name))) assert.ok(t.inputSchema.required.includes('site_url'));
   assert.deepEqual(body.result.tools.filter(t=>['connect_site','list_sites','remove_site'].includes(t.name)).map(t=>t.name),['connect_site','list_sites','remove_site']);
   assert.ok(body.result.tools.some(t=>t.name==='delete_draft_theme' && !t.annotations.readOnlyHint));
 });
+test('Amelia extension catalog keeps explicit site routing and read/write boundaries',async()=>{
+  const e=await env(),r=await gateway.fetch(request('/mcp',{jsonrpc:'2.0',id:1,method:'tools/list'},''),e);
+  const tools=(await r.json()).result.tools.filter(t=>t.name.startsWith('amelia_'));
+  assert.equal(tools.length,4);
+  for(const tool of tools) assert.ok(tool.inputSchema.required.includes('site'));
+  assert.equal(tools.find(t=>t.name==='amelia_preview_appointment').annotations.readOnlyHint,true);
+  assert.equal(tools.find(t=>t.name==='amelia_reschedule_appointment').annotations.readOnlyHint,false);
+});
+
+test('Amelia approval binds appointment state and site and never replays an uncertain write',async()=>{
+  const e=await env(),args={site:B.alias,appointment_id:102,expected_state:'b'.repeat(64),new_start:'2026-12-07 09:00',timezone:'America/New_York',notify_participants:true};
+  globalThis.fetch=async()=>approvalResponse(B);
+  assert.ok((await rpc(e,'amelia_reschedule_appointment',args)).body.result.isError);
+  globalThis.fetch=()=>assert.fail('Changed operation must never reach WordPress');
+  for(const altered of [{site:A.alias},{appointment_id:103},{expected_state:'c'.repeat(64)},{new_start:'2026-12-08 09:00'}]) {
+    assert.ok((await rpc(e,'amelia_reschedule_appointment',{...args,...altered,approval_id:approval})).body.error);
+  }
+  let calls=0;
+  globalThis.fetch=async(url,init)=>{calls++;assert.equal(String(url),endpoints(B).mcp);assert.equal(JSON.parse(init.body).params.name,'amelia_reschedule_appointment');throw new Error('Uncertain transport');};
+  const approved={...args,approval_id:approval};
+  assert.ok((await rpc(e,'amelia_reschedule_appointment',approved)).body.error);
+  assert.ok((await rpc(e,'amelia_reschedule_appointment',approved)).body.error);
+  assert.equal(calls,1);
+});
+
+test('Amelia preview cannot accept approval or destination overrides',async()=>{
+  const e=await env();globalThis.fetch=()=>assert.fail('Invalid envelope must not reach WordPress');
+  for(const extra of [{endpoint:A.canonical_url},{approval_id:approval}]) {
+    assert.ok((await rpc(e,'amelia_preview_appointment',{site:B.alias,appointment_id:102,expected_state:'a'.repeat(64),...extra})).body.error);
+  }
+});
+
 test('test-only registry fixtures preserve populated credentials and disabled state',async()=>{
   const e=await env(),before=e.DB.sql.prepare('SELECT * FROM oauth_connections').all();
   e.DB.sql.prepare('UPDATE sites SET enabled=0 WHERE site_id=?').run(B.site_id);
