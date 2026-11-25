@@ -32,6 +32,7 @@ class NativeFactory { static function create($raw) { return new NativeAppointmen
 class_alias(NativeFactory::class,'AmeliaBooking\\Domain\\Factory\\Booking\\Appointment\\AppointmentFactory');
 class NativeService {
     function getAppointmentService(...$args) { return $this; }
+    function getDuration() { return new Value(3600); }
     function getTimeBefore() { return new Value(0); }
     function getTimeAfter() { return new Value(900); }
     function getAppointmentLengthTime(...$args) { return 3600; }
@@ -81,7 +82,7 @@ define('AMELIA_PATH',$root);define('AMELIA_VERSION','9.10');
 function reset_native() {
     $GLOBALS['raw']=array('id'=>102,'bookingStart'=>'2026-12-11 09:00:00','bookingEnd'=>'2026-12-11 10:00:00','internalNotes'=>'original',
         'serviceId'=>12,'providerId'=>1,'locationId'=>4,'status'=>'approved','notifyParticipants'=>true,'bookings'=>array(
-            array('id'=>6,'customerId'=>7,'status'=>'approved')));
+            array('id'=>6,'customerId'=>7,'status'=>'approved','duration'=>3600)));
     foreach(array('available','nativePermission','wpPermission','executing') as $key) $GLOBALS[$key]=true;
     foreach(array('partial','tamper','eventFailure') as $key) $GLOBALS[$key]=false;
     $GLOBALS['mutations']=$GLOBALS['emissions']=0;$GLOBALS['site']='https://fixture.test';
@@ -135,6 +136,9 @@ try {
     $args['new_start']=$args['timezone']=null;$args['internal_notes']='group notes';
     $out=UWNext_Amelia::handle('update-appointment',$args);
     check(!is_wp_error($out)&&array_column($raw['bookings'],'id')===array(6,8),'Group notes retain both bookings');
+    reset_native();$raw['bookings'][0]['duration']=1800;$args=change_args();
+    $out=UWNext_Amelia::handle('reschedule-appointment',$args);
+    check(is_wp_error($out)&&$out->get_error_code()==='unsupported_slot_profile'&&$mutations===0,'Custom duration fails closed while stored base duration is accepted');
     class WP_REST_Request extends ArrayObject {
         function __construct(...$args) { parent::__construct(); }
         function set_body_params($input) { $this->exchangeArray($input); }
@@ -160,4 +164,3 @@ try {
     unlink($root.'/src/Infrastructure/ContainerConfig/container.php');
     foreach(array('/src/Infrastructure/ContainerConfig','/src/Infrastructure','/src','') as $suffix)rmdir($root.$suffix);
 }
-

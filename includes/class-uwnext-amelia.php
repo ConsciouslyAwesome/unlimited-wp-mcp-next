@@ -172,8 +172,11 @@ final class UWNext_Amelia {
     /** Match the native administrator slot grid as well as overlap validation. */
     private static function grid_available($container,$raw,$candidate) {
         // Group/extras/custom-duration slot inputs need separate acceptance. Fail closed.
+        $service=$container->get('application.bookable.service')->getAppointmentService($raw['serviceId'],$raw['providerId']);
+        $bookingDuration=(int)($raw['bookings'][0]['duration']??0);
         if (count($raw['bookings'])!==1 || !empty($raw['bookings'][0]['extras']) ||
-            (int)($raw['bookings'][0]['persons']??1)!==1 || !empty($raw['bookings'][0]['duration'])) {
+            (int)($raw['bookings'][0]['persons']??1)!==1 ||
+            ($bookingDuration && $bookingDuration!==$service->getDuration()->getValue())) {
             return self::error('unsupported_slot_profile','Group, extras and custom-duration rescheduling require a separately verified slot profile. No change was made.');
         }
         $start=$candidate->getBookingStart()->getValue();
