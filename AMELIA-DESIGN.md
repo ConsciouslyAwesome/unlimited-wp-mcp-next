@@ -150,8 +150,7 @@ category to pass with recorded execution evidence; mocks do not establish live b
 
 ## Current limitations
 
-This is not release-ready. Employee/location changes, service changes and individual
-booking reassignment are not exposed. `notify_participants=false` is unsupported.
+This is not release-ready. Employee/location changes are implemented for the verified single-booking profile, with live acceptance pending. Service changes and individual booking reassignment are not exposed. `notify_participants=false` is unsupported.
 Package/recurrence/payment
 variants and external calendars require live acceptance. Only inspected 9.10 is
 supported; class presence is a compatibility check, not a claim that a licensed
@@ -166,4 +165,11 @@ Staging: isolation helper executed and independently refreshed; encrypted backup
 ### Live acceptance finding and refinement
 On isolated staging, synthetic appointment 98 (booking 152, customer 106, service 12, employee 1, location 4) moved from November 30 2026 09:00 to 10:00 America/New_York through an approved native update. A separate read verified the stored time and unchanged IDs; the matching receipt completed. Native event processing was invoked, while external delivery/calendar synchronization remains unverified with isolation enabled.
 
-Read-only probes accepted self-exclusion at 10:00 and rejected 23:00, but accepted 10:30 despite the native administrator UI offering hourly starts. Refinement: require both native canBeBooked and an exact native GetTimeSlots administrator-grid match, excluding the original appointment and pinning its employee/location/timezone. Group, extras and custom-duration reschedules now fail closed pending their own slot profiles; notes-only edits retain relationship verification. This grid refinement still needs Actions and live staging verification.
+Read-only probes accepted self-exclusion at 10:00 and rejected 23:00, but accepted 10:30 despite the native administrator UI offering hourly starts. Refinement: require both native canBeBooked and an exact native GetTimeSlots administrator-grid match, excluding the original appointment and pinning its employee/location/timezone. Group, extras and custom-duration reschedules now fail closed pending their own slot profiles; notes-only edits retain relationship verification. The grid refinement passed Actions run 45519640049 and staging probes: 10:00/11:00 accepted, 10:30 rejected. Notes-only mutation passed with receipt 04745ca3ca26f84c42b5c44f5074c040087dddd1d7104af7, preserved IDs/time, and no requested notifications or calendar processing.
+
+### Employee/location and concurrency refinement
+Employee and location IDs are optional on preview/update, with positive-ID validation. Candidate entities and native grid queries use the target employee/location; original IDs and relationships are preserved except for the explicitly approved assignment. Employee changes load the native provider entity. Scheduling changes, including location-only edits, dispatch the full update and emit its event once. Linked Google/Outlook/Apple/Zoom/LessonSpace employee transfers fail before mutation until dedicated-account acceptance establishes event migration. Calendar IDs remain strict invariants in this profile.
+
+State is read again after availability (which may contact calendars) immediately before dispatch, catching UI edits during validation. This narrows the race but does not establish atomic cross-channel serialization after that final read. Native database lock behavior remains unverified. End time is now verified along with start time and identities. An exception escaping the outer Amelia tool returns an uncertain receipt ID, records uncertainty, consumes its approval and never retries; the owned Unlimited lock is released.
+
+Dedicated Google/Outlook test account/calendar identities and a notification test inbox have been requested. Cloned credentials remain disabled. No real provider synchronization, external busy-calendar test or delivered notification has been certified. Suppression remains fail-closed because the installed native flag does not cover all provider/push channels. Group, extras, package and reassignment work follows the remaining single-appointment acceptance.

@@ -5,7 +5,7 @@ class NativeResult {
     const RESULT_SUCCESS='success';
     function __construct(public $result='success') {}
     function getResult() { return $this->result; }
-    function getData() { return array('slots'=>array('2026-12-07'=>array('09:00'=>array(array(1,4))))); }
+    function getData() { return array('slots'=>array('2026-12-07'=>array('09:00'=>array(array(1,4))),'2026-12-11'=>array('09:00'=>array(array(1,4))))); }
 }
 class NativeCommand {
     public $fields=array();
@@ -25,6 +25,7 @@ class NativeAppointment {
     function toArray() { return $this->raw; }
     function getBookingStart() { return new Value(new DateTime($this->raw['bookingStart'],new DateTimeZone('America/New_York'))); }
     function getBookingEnd() { return new Value(new DateTime($this->raw['bookingEnd'],new DateTimeZone('America/New_York'))); }
+    function setProvider($provider) { check($provider->getId()->getValue()===$this->raw['providerId'],'Candidate provider entity matches target ID'); }
     function setBookingStart($value) { $this->raw['bookingStart']=$value->getValue()->format('Y-m-d H:i:s'); }
     function setBookingEnd($value) { $this->raw['bookingEnd']=$value->getValue()->format('Y-m-d H:i:s'); }
 }
@@ -36,16 +37,17 @@ class NativeService {
     function getTimeBefore() { return new Value(0); }
     function getTimeAfter() { return new Value(900); }
     function getAppointmentLengthTime(...$args) { return 3600; }
-    function canBeBooked(...$args) { return $GLOBALS['available']; }
+    function canBeBooked(...$args) { if ($GLOBALS['race']) { $GLOBALS['raw']['internalNotes']='UI concurrent edit'; } return $GLOBALS['available']; }
     function currentUserCanRead(...$args) { return $GLOBALS['nativePermission']; }
     function currentUserCanWrite(...$args) { return $GLOBALS['nativePermission']; }
 }
+class NativeProviderRepository { function getById($id) { return new class($id) { function __construct(private $id) {} function getId() { return new Value($this->id); } }; } }
 class NativeRepository { function getById($id) { if ($id!==102) { throw new RuntimeException('missing'); } return new NativeAppointment($GLOBALS['raw']); } }
 class NativeBus {
     function handle($command) {
         if (isset($command->fields['excludeAppointmentId'])) {
             check($command->fields['excludeAppointmentId']===102,'Grid query excludes original appointment');
-            check($command->fields['providerIds']===array(1)&&$command->fields['locationId']===4,'Grid query pins original employee and location');
+            check($command->fields['providerIds']===array($GLOBALS['expectedProvider'])&&$command->fields['locationId']===$GLOBALS['expectedLocation'],'Grid query pins intended employee and location');
             check($command->fields['page']==='appointments'&&$command->fields['queryTimeZone']==='America/New_York','Grid uses native administrator policy and timezone');
             return new NativeResult();
         }
@@ -54,6 +56,8 @@ class NativeBus {
         }
         if (isset($command->fields['bookingStart'])) {
             $GLOBALS['mutations']++;
+            $GLOBALS['raw']['providerId']=$command->fields['providerId'];
+            $GLOBALS['raw']['locationId']=$command->fields['locationId'];
             $GLOBALS['raw']['bookingStart']=$command->fields['bookingStart'];
             $GLOBALS['raw']['bookingEnd']=(new DateTime($command->fields['bookingStart']))->modify('+1 hour')->format('Y-m-d H:i:s');
             if ($GLOBALS['partial']) { return new NativeResult('error'); }
@@ -70,7 +74,7 @@ class NativeContainer {
     function getUserApplicationService() { return new NativeService(); }
     function getCommandBus() { return new NativeBus(); }
     function getEventBus() { return new NativeEvents(); }
-    function get($key) { return $key==='domain.booking.appointment.repository'?new NativeRepository():new NativeService(); }
+    function get($key) { if ($key==='domain.users.providers.repository') return new NativeProviderRepository();return $key==='domain.booking.appointment.repository'?new NativeRepository():new NativeService(); }
 }
 class UWNext_Store { static function digest($name,$raw) { return hash('sha256',json_encode(array($GLOBALS['site'],$name,$raw))); } }
 class UWNext_Tools { static function executing() { return $GLOBALS['executing']; } }
@@ -84,7 +88,8 @@ function reset_native() {
         'serviceId'=>12,'providerId'=>1,'locationId'=>4,'status'=>'approved','notifyParticipants'=>true,'bookings'=>array(
             array('id'=>6,'customerId'=>7,'status'=>'approved','duration'=>3600)));
     foreach(array('available','nativePermission','wpPermission','executing') as $key) $GLOBALS[$key]=true;
-    foreach(array('partial','tamper','eventFailure') as $key) $GLOBALS[$key]=false;
+    foreach(array('partial','tamper','eventFailure','race') as $key) $GLOBALS[$key]=false;
+    $GLOBALS['expectedProvider']=1;$GLOBALS['expectedLocation']=4;
     $GLOBALS['mutations']=$GLOBALS['emissions']=0;$GLOBALS['site']='https://fixture.test';
 }
 function lookup() { return UWNext_Amelia::handle('get-appointment',array('appointment_id'=>102)); }
@@ -139,6 +144,18 @@ try {
     reset_native();$raw['bookings'][0]['duration']=1800;$args=change_args();
     $out=UWNext_Amelia::handle('reschedule-appointment',$args);
     check(is_wp_error($out)&&$out->get_error_code()==='unsupported_slot_profile'&&$mutations===0,'Custom duration fails closed while stored base duration is accepted');
+    reset_native();$args=change_args();$args['employee_id']=2;$expectedProvider=2;
+    $out=UWNext_Amelia::handle('update-appointment',$args);
+    check(!is_wp_error($out)&&$raw['providerId']===2&&$mutations===1&&$emissions===1,'Approved employee change uses full update and one event');
+    reset_native();$args=change_args();$args['new_start']=$args['timezone']=null;$args['location_id']=5;$expectedLocation=5;
+    $out=UWNext_Amelia::handle('update-appointment',$args);
+    check(!is_wp_error($out)&&$raw['locationId']===5&&$raw['bookingStart']==='2026-12-11 09:00:00'&&$mutations===1&&$emissions===1,'Location-only change uses native update without moving time');
+    reset_native();$raw['googleCalendarEventId']='linked-fixture';$args=change_args();$args['employee_id']=2;
+    $out=UWNext_Amelia::handle('update-appointment',$args);
+    check(is_wp_error($out)&&$out->get_error_code()==='employee_integration_profile_unverified'&&$mutations===0,'Linked meeting transfer requires dedicated acceptance');
+    reset_native();$args=change_args();$race=true;
+    $out=UWNext_Amelia::handle('reschedule-appointment',$args);
+    check(is_wp_error($out)&&$out->get_error_code()==='appointment_state_changed'&&$mutations===0&&$raw['internalNotes']==='UI concurrent edit','Concurrent UI edit during availability preserved');
     class WP_REST_Request extends ArrayObject {
         function __construct(...$args) { parent::__construct(); }
         function set_body_params($input) { $this->exchangeArray($input); }

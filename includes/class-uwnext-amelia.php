@@ -36,6 +36,8 @@ final class UWNext_Amelia {
                 );
                 if ($operation !== 'reschedule-appointment') {
                     $args['internal_notes'] = array('type'=>'string','maxLength'=>10000);
+                    $args['employee_id'] = array('type'=>'integer','minimum'=>1);
+                    $args['location_id'] = array('type'=>'integer','minimum'=>1);
                 } else { $args['new_start']['required']=true; $args['timezone']['required']=true; }
                 if (!$read) { $args['dry_run']=array('type'=>'boolean','default'=>true); }
             }
@@ -210,7 +212,23 @@ final class UWNext_Amelia {
         $fields=array_intersect_key($raw,array_flip(array('id','bookings','bookingStart','notifyParticipants','createPaymentLinks','internalNotes','serviceId','providerId','locationId','lessonSpace')));
         $fields['removedBookings']=array(); $fields['notifyParticipants']=true;
         $fields['utc']=false;
-        $candidate=\AmeliaBooking\Domain\Factory\Booking\Appointment\AppointmentFactory::create($raw);
+        $target=$raw;
+        $employeeChanged=($request['employee_id']??null)!==null && (int)($request['employee_id']??null)!==(int)$raw['providerId'];
+        $locationChanged=($request['location_id']??null)!==null && (int)($request['location_id']??null)!==(int)($raw['locationId']??0);
+        if ($employeeChanged) {
+            foreach (array('googleCalendarEventId','outlookCalendarEventId','appleCalendarEventId','zoomMeeting','lessonSpace') as $key) {
+                if (!empty($raw[$key]) && ($key!=='zoomMeeting' || !empty($raw[$key]['id']))) {
+                    return self::error('employee_integration_profile_unverified','Employee transfers with linked external meetings require dedicated-account acceptance. No change was made.');
+                }
+            }
+            $target['providerId']=(int)($request['employee_id']??null);$fields['providerId']=$target['providerId'];
+            unset($target['provider']);
+        }
+        if ($locationChanged) { $target['locationId']=(int)($request['location_id']??null);$fields['locationId']=$target['locationId'];unset($target['location']); }
+        $schedulingChanged=$request['new_start']!==null || $employeeChanged || $locationChanged;
+        $candidate=\AmeliaBooking\Domain\Factory\Booking\Appointment\AppointmentFactory::create($target);
+        if ($employeeChanged) { $candidate->setProvider($container->get('domain.users.providers.repository')->getById($target['providerId'])); }
+
         if ($request['new_start'] !== null) {
             if (!$request['timezone']) { return self::error('timezone_required','A timezone is required with new_start.',400); }
             $instant=self::local_time($request['new_start'],$request['timezone']);
@@ -219,24 +237,28 @@ final class UWNext_Amelia {
             $instant=$instant->setTimezone($nativeZone);
             $fields['bookingStart']=$instant->format('Y-m-d H:i:s');
             $candidate->setBookingStart(new \AmeliaBooking\Domain\ValueObjects\DateTime\DateTimeValue(DateTime::createFromImmutable($instant)));
-            $duration=$container->get('application.booking.appointment.service')->getAppointmentLengthTime($candidate,
-                $container->get('application.bookable.service')->getAppointmentService($raw['serviceId'],$raw['providerId']));
-            $candidate->setBookingEnd(new \AmeliaBooking\Domain\ValueObjects\DateTime\DateTimeValue(DateTime::createFromImmutable($instant->modify('+'.$duration.' seconds'))));
+
         } elseif ($request['timezone'] !== null) { return self::error('start_required','timezone requires new_start.',400); }
+        if ($schedulingChanged) {
+            $duration=$container->get('application.booking.appointment.service')->getAppointmentLengthTime($candidate,
+                $container->get('application.bookable.service')->getAppointmentService($target['serviceId'],$target['providerId']));
+            $end=clone $candidate->getBookingStart()->getValue();$end->modify('+'.$duration.' seconds');
+            $candidate->setBookingEnd(new \AmeliaBooking\Domain\ValueObjects\DateTime\DateTimeValue($end));
+        }
         if ($request['internal_notes'] !== null) { $fields['internalNotes']=$request['internal_notes']; }
-        if ($request['new_start'] === null && $request['internal_notes'] === null) { return self::error('empty_patch','Provide a start time or internal notes.',400); }
+        if (!$schedulingChanged && $request['internal_notes'] === null) { return self::error('empty_patch','Provide a changed start, employee, location or internal notes.',400); }
         // Retain the existing ID for native self-conflict handling; verify exclusion on staging.
-        $available=$request['new_start'] === null || $container->get('application.booking.appointment.service')->canBeBooked($candidate,false,null,null);
+        $available=!$schedulingChanged || $container->get('application.booking.appointment.service')->canBeBooked($candidate,false,null,null);
         if (!$available) { return self::error('time_slot_unavailable','Amelia rejected the requested time. No change was made.'); }
-        if ($request['new_start'] !== null) {
-            $grid=self::grid_available($container,$raw,$candidate);
+        if ($schedulingChanged) {
+            $grid=self::grid_available($container,$target,$candidate);
             if (is_wp_error($grid)) { return $grid; }
             if (!$grid) { return self::error('time_slot_off_grid','Choose a start offered by the native administrator slot grid. No change was made.'); }
         }
         $preview=array('before'=>self::summary($old,$container),'after'=>self::summary($candidate,$container),
             'notify_participants'=>true,'internal_notes_changed'=>array_key_exists('internalNotes',$fields) && ($fields['internalNotes']!==($raw['internalNotes']??null)),
             'affected_bookings'=>self::summary($old,$container)['bookings'],'availability'=>'available');
-        return array('old'=>$raw,'fields'=>$fields,'preview'=>$preview);
+        return array('old'=>$raw,'expected'=>$target,'fields'=>$fields,'preview'=>$preview,'scheduling_changed'=>$schedulingChanged);
     }
 
     public static function preview($request) {
@@ -254,8 +276,13 @@ final class UWNext_Amelia {
             if (is_wp_error($prepared)) { return $prepared; }
             if ($operation === 'preview-appointment' || $request['dry_run'] === true) { return $prepared['preview']; }
             if (!UWNext_Tools::executing()) { return self::error('approval_required','Use the exact-operation MCP approval workflow.'); }
+            // Availability may call external providers. Detect a UI edit during that work.
+            $fresh=self::load($container,(int)$request['appointment_id'])->toArray();
+            if (!hash_equals(self::fingerprint($prepared['old']),self::fingerprint($fresh))) {
+                return self::error('appointment_state_changed','The appointment changed during availability validation. Retrieve it and review again.');
+            }
             $started=true;
-            $notesOnly=$request['new_start'] === null;
+            $notesOnly=!$prepared['scheduling_changed'];
             $result=self::dispatch($container,$notesOnly?'UpdateAppointmentNote':'UpdateAppointment',(int)$request['appointment_id'],
                 $notesOnly?array('internalNotes'=>$prepared['fields']['internalNotes']):$prepared['fields']);
             if ($result->getResult() !== \AmeliaBooking\Application\Commands\CommandResult::RESULT_SUCCESS) {
@@ -264,7 +291,8 @@ final class UWNext_Amelia {
             // Same event emitted by UpdateAppointmentController, once, after successful dispatch.
             if (!$notesOnly) { $container->getEventBus()->emit('AppointmentEdited',$result); }
             $after=self::load($container,(int)$request['appointment_id']); $raw=$after->toArray();
-            if (!self::preserved($prepared['old'],$raw) || $raw['bookingStart'] !== $prepared['fields']['bookingStart']
+            if (!self::preserved($prepared['expected'],$raw) || $raw['bookingStart'] !== $prepared['fields']['bookingStart']
+                || $after->getBookingEnd()->getValue()->format(DATE_ATOM)!==$prepared['preview']['after']['end']
                 || ($raw['internalNotes']??null) !== ($prepared['fields']['internalNotes']??null)) {
                 return self::error('amelia_verification_uncertain','The resulting appointment requires reconciliation. Do not repeat this write.');
             }

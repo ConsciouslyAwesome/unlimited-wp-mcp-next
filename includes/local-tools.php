@@ -51,7 +51,7 @@ final class UWNext_Tools {
                 if(in_array($route,array('/images/search','/skill/load','/rest-api/read','/rest-api/write'),true)) {$cap='manage_options plus the native endpoint permission callback where applicable';}
                 if(str_starts_with($route,'/amelia/')) {
                     $cap='manage_options plus Amelia-native appointment permissions';
-                    $desc=$label.'. Amelia 9.10 compatibility adapter. Appointment IDs and customer booking IDs are distinct. Retrieve expected_state before preview or mutation. Preview is non-mutating. Only appointment time and internal notes are supported; silent employee notifications are not supported. '.($read?'Read operation.':'Exact-operation browser approval required.');
+                    $desc=$label.'. Amelia 9.10 compatibility adapter. Appointment IDs and customer booking IDs are distinct. Retrieve expected_state before preview or mutation. Preview is non-mutating. Appointment time, internal notes, employee and location changes use the verified single-booking profile; silent employee notifications are not supported. '.($read?'Read operation.':'Exact-operation browser approval required.');
                 }
                 $desc.=' Requires '.$cap.'.';
                 $tools[$name]=array('name'=>$name,'description'=>$desc,'inputSchema'=>array('type'=>'object','properties'=>(object)$props,'required'=>$required,'additionalProperties'=>false),'annotations'=>array('readOnlyHint'=>$read,'destructiveHint'=>!$read,'idempotentHint'=>$read,'openWorldHint'=>true),'_meta'=>array('org.unlimitedwpmcp/permission'=>$cap),'route'=>$route,'method'=>$method,'def'=>$def,'read'=>$read);
@@ -174,6 +174,10 @@ final class UWNext_Tools {
             }
             return $out;
         } catch(Throwable $error) {
+            if(str_starts_with($name,'amelia_') || $amelia_ability!==null) {
+                UWNext_Store::log($name,'uncertain',$op);
+                return new WP_Error('amelia_operation_uncertain','Execution was interrupted. Inspect this receipt and the current appointment before any new write.',array('status'=>503,'operation_id'=>$op));
+            }
             UWNext_Store::log($name,'host_failure',$op);
             return self::deny('host_failure','WordPress could not complete the operation. Inspect the local receipt before retrying a write.',503);
         } finally { UWNext_Approval_Bypass::$request_bypassed=false;self::$executing=false; if($lock && get_option('uwnext_write_lock')===$op) { delete_option('uwnext_write_lock'); } }

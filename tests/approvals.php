@@ -86,6 +86,9 @@ if(($argv[1]??'')==='amelia') {
     check(UWNext_Admin::approve($id,7),'Fixture human approves Amelia operation');
     $other=$args;$other['appointment_id']=103;$other['approval_id']=$id;
     check(code(UWNext_Tools::call('amelia_reschedule_appointment',$other),'approval_invalid')&&$runs===0,'Amelia approval cannot change appointment');
+    add_option('uwnext_write_lock','other-operation');$busy=$args;$busy['approval_id']=$id;
+    check(code(UWNext_Tools::call('amelia_reschedule_appointment',$busy),'operation_busy')&&$runs===0&&UWNext_Store::get('approval',$id)!==false,'Concurrent Unlimited write rejected without consuming approval');
+    delete_option('uwnext_write_lock');
     $args['approval_id']=$id;$out=UWNext_Tools::call('amelia_reschedule_appointment',$args);
     check(($out['appointment_update']??'')==='verified'&&($out['operation_id']??'')===$id&&$runs===1,'Approved Amelia write returns matching receipt');
     check(code(UWNext_Tools::call('amelia_reschedule_appointment',$args),'approval_invalid')&&$runs===1,'Amelia approval cannot replay');
@@ -112,6 +115,14 @@ if(($argv[1]??'')==='amelia') {
     check(code(UWNext_Tools::call('ability_run',$wrapped),'approval_invalid')&&$runs===2,'Ability approval cannot replay');
     $generic=array('name'=>'other/read-pretender','input'=>array('dry_run'=>true));
     check(code(UWNext_Tools::call('ability_run',$generic),'approval_required'),'Unrelated abilities do not gain read exemption');
+    UWNext_Tools::$routes['/amelia/reschedule-appointment']['POST']['callback']=function($request) use (&$runs) { $runs++;throw new RuntimeException('Host interrupted after possible native dispatch'); };
+    $uncertainArgs=array('appointment_id'=>102,'expected_state'=>'fresh','dry_run'=>false);
+    $pending=UWNext_Tools::call('amelia_reschedule_appointment',$uncertainArgs);$uncertainId=$pending->get_error_data()['approval_id'];UWNext_Admin::approve($uncertainId,7);
+    $uncertainArgs['approval_id']=$uncertainId;$before=$runs;$out=UWNext_Tools::call('amelia_reschedule_appointment',$uncertainArgs);
+    check(code($out,'amelia_operation_uncertain')&&$out->get_error_data()['operation_id']===$uncertainId&&$runs===$before+1,'Host interruption returns uncertain receipt ID without retry');
+    check(in_array(array('amelia_reschedule_appointment','uncertain',$uncertainId),$events,true),'Uncertain host outcome has matching receipt marker');
+    check(get_option('uwnext_write_lock')===false&&!UWNext_Tools::executing(),'Host interruption releases owned lock and execution context');
+    check(code(UWNext_Tools::call('amelia_reschedule_appointment',$uncertainArgs),'approval_invalid')&&$runs===$before+1,'Uncertain operation cannot replay spent approval');
     echo "RESULT $passed Amelia approval checks passed\n";exit;
 }
 
