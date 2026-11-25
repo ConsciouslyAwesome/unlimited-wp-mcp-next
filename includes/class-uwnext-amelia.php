@@ -169,6 +169,29 @@ final class UWNext_Amelia {
         return $container->get('domain.booking.appointment.repository')->getById($id);
     }
 
+    /** Match the native administrator slot grid as well as overlap validation. */
+    private static function grid_available($container,$raw,$candidate) {
+        // Group/extras/custom-duration slot inputs need separate acceptance. Fail closed.
+        if (count($raw['bookings'])!==1 || !empty($raw['bookings'][0]['extras']) ||
+            (int)($raw['bookings'][0]['persons']??1)!==1 || !empty($raw['bookings'][0]['duration'])) {
+            return self::error('unsupported_slot_profile','Group, extras and custom-duration rescheduling require a separately verified slot profile. No change was made.');
+        }
+        $start=$candidate->getBookingStart()->getValue();
+        $result=self::dispatch($container,'GetTimeSlots',$raw['id'],array(
+            'serviceId'=>$raw['serviceId'],'providerIds'=>array($raw['providerId']),
+            'locationId'=>$raw['locationId']??null,'excludeAppointmentId'=>$raw['id'],
+            'page'=>'appointments','persons'=>1,'group'=>false,'extras'=>array(),'prebooked'=>array(),
+            'startDateTime'=>$start->format('Y-m-d').' 00:00',
+            'endDateTime'=>$start->format('Y-m-d').' 23:59',
+            'queryTimeZone'=>$start->getTimezone()->getName(),'timeZone'=>null,'structured'=>false,
+        ));
+        if ($result->getResult() !== \AmeliaBooking\Application\Commands\CommandResult::RESULT_SUCCESS) {
+            return self::error('slot_grid_unverified','Amelia could not verify the administrator slot grid. No change was made.');
+        }
+        $data=$result->getData();
+        return isset($data['slots'][$start->format('Y-m-d')][$start->format('H:i')]);
+    }
+
     private static function prepare($request,$container) {
         $old=self::load($container,(int)$request['appointment_id']); $raw=$old->toArray();
         if (!hash_equals(self::fingerprint($raw),(string)$request['expected_state'])) {
@@ -202,6 +225,11 @@ final class UWNext_Amelia {
         // Retain the existing ID for native self-conflict handling; verify exclusion on staging.
         $available=$request['new_start'] === null || $container->get('application.booking.appointment.service')->canBeBooked($candidate,false,null,null);
         if (!$available) { return self::error('time_slot_unavailable','Amelia rejected the requested time. No change was made.'); }
+        if ($request['new_start'] !== null) {
+            $grid=self::grid_available($container,$raw,$candidate);
+            if (is_wp_error($grid)) { return $grid; }
+            if (!$grid) { return self::error('time_slot_off_grid','Choose a start offered by the native administrator slot grid. No change was made.'); }
+        }
         $preview=array('before'=>self::summary($old,$container),'after'=>self::summary($candidate,$container),
             'notify_participants'=>true,'internal_notes_changed'=>array_key_exists('internalNotes',$fields) && ($fields['internalNotes']!==($raw['internalNotes']??null)),
             'affected_bookings'=>self::summary($old,$container)['bookings'],'availability'=>'available');

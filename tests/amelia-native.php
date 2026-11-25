@@ -5,6 +5,7 @@ class NativeResult {
     const RESULT_SUCCESS='success';
     function __construct(public $result='success') {}
     function getResult() { return $this->result; }
+    function getData() { return array('slots'=>array('2026-12-07'=>array('09:00'=>array(array(1,4))))); }
 }
 class NativeCommand {
     public $fields=array();
@@ -13,7 +14,7 @@ class NativeCommand {
     function setUserApplicationService($value) {}
     function setField($key,$value) { $this->fields[$key]=$value; }
 }
-foreach (array('GetAppointment','UpdateAppointment','UpdateAppointmentNote') as $name) {
+foreach (array('GetAppointment','GetTimeSlots','UpdateAppointment','UpdateAppointmentNote') as $name) {
     class_alias(NativeCommand::class,'AmeliaBooking\\Application\\Commands\\Booking\\Appointment\\'.$name.'Command');
 }
 class_alias(NativeResult::class,'AmeliaBooking\\Application\\Commands\\CommandResult');
@@ -41,6 +42,12 @@ class NativeService {
 class NativeRepository { function getById($id) { if ($id!==102) { throw new RuntimeException('missing'); } return new NativeAppointment($GLOBALS['raw']); } }
 class NativeBus {
     function handle($command) {
+        if (isset($command->fields['excludeAppointmentId'])) {
+            check($command->fields['excludeAppointmentId']===102,'Grid query excludes original appointment');
+            check($command->fields['providerIds']===array(1)&&$command->fields['locationId']===4,'Grid query pins original employee and location');
+            check($command->fields['page']==='appointments'&&$command->fields['queryTimeZone']==='America/New_York','Grid uses native administrator policy and timezone');
+            return new NativeResult();
+        }
         if (!isset($command->fields['id']) && isset($command->fields['bookingStart'])) {
             throw new RuntimeException('Missing full patch');
         }
@@ -74,7 +81,7 @@ define('AMELIA_PATH',$root);define('AMELIA_VERSION','9.10');
 function reset_native() {
     $GLOBALS['raw']=array('id'=>102,'bookingStart'=>'2026-12-11 09:00:00','bookingEnd'=>'2026-12-11 10:00:00','internalNotes'=>'original',
         'serviceId'=>12,'providerId'=>1,'locationId'=>4,'status'=>'approved','notifyParticipants'=>true,'bookings'=>array(
-            array('id'=>6,'customerId'=>7,'status'=>'approved'),array('id'=>8,'customerId'=>9,'status'=>'approved')));
+            array('id'=>6,'customerId'=>7,'status'=>'approved')));
     foreach(array('available','nativePermission','wpPermission','executing') as $key) $GLOBALS[$key]=true;
     foreach(array('partial','tamper','eventFailure') as $key) $GLOBALS[$key]=false;
     $GLOBALS['mutations']=$GLOBALS['emissions']=0;$GLOBALS['site']='https://fixture.test';
@@ -93,7 +100,7 @@ try {
     $executing=true;
     $out=UWNext_Amelia::handle('reschedule-appointment',$args);
     check(!is_wp_error($out) && $out['appointment_update']==='verified' && $mutations===1 && $emissions===1,'One native update and event');
-    check($raw['id']===102 && array_column($raw['bookings'],'id')===array(6,8),'Identities preserved');
+    check($raw['id']===102 && array_column($raw['bookings'],'id')===array(6),'Identities preserved');
     check(is_wp_error(UWNext_Amelia::handle('reschedule-appointment',$args)) && $mutations===1,'Stale request does not write twice');
     reset_native();$args=change_args();$executing=false;
     check(is_wp_error(UWNext_Amelia::handle('reschedule-appointment',$args)) && $mutations===0,'Direct mutation without execution gate denied');
@@ -116,6 +123,18 @@ try {
         check(is_wp_error($out) && in_array($out->get_error_code(),array('amelia_operation_uncertain','amelia_verification_uncertain'),true),'Uncertain failure '.$failure);
         check($mutations===1,'No automatic retry '.$failure);
     }
+    reset_native();$args=change_args();$args['new_start']='2026-12-07 09:30';
+    $out=UWNext_Amelia::handle('reschedule-appointment',$args);
+    check(is_wp_error($out)&&$out->get_error_code()==='time_slot_off_grid'&&$mutations===0,'Off-grid request rejected before mutation');
+    reset_native();$args=change_args();$raw['bookings'][0]['extras']=array(array('extraId'=>2,'quantity'=>1));$args['expected_state']=UWNext_Amelia::handle('get-appointment',array('appointment_id'=>102))['expected_state'];
+    $out=UWNext_Amelia::handle('reschedule-appointment',$args);
+    check(is_wp_error($out)&&$out->get_error_code()==='unsupported_slot_profile'&&$mutations===0,'Unverified extra profile fails closed');
+    reset_native();$raw['bookings'][]=array('id'=>8,'customerId'=>9,'status'=>'approved');$args=change_args();
+    $out=UWNext_Amelia::handle('reschedule-appointment',$args);
+    check(is_wp_error($out)&&$out->get_error_code()==='unsupported_slot_profile'&&$mutations===0,'Unverified group profile fails closed');
+    $args['new_start']=$args['timezone']=null;$args['internal_notes']='group notes';
+    $out=UWNext_Amelia::handle('update-appointment',$args);
+    check(!is_wp_error($out)&&array_column($raw['bookings'],'id')===array(6,8),'Group notes retain both bookings');
     class WP_REST_Request extends ArrayObject {
         function __construct(...$args) { parent::__construct(); }
         function set_body_params($input) { $this->exchangeArray($input); }
