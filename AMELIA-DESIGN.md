@@ -157,3 +157,8 @@ variants and external calendars require live acceptance. Only inspected 9.10 is
 supported; class presence is a compatibility check, not a claim that a licensed
 command can execute. The installed command map and native permissions remain final.
 No production mutations, deployment or merge are authorized by this development work.
+
+### Existing gateway compatibility
+The four `uwnext-amelia/*` WordPress abilities expose the same fixed operations through the existing `ability_run` gateway. They share route schemas, native authorization, dry-run defaults, exact nested-input approvals, affected-customer previews, write locks, state checks, and receipts. Only these exact aliases receive read classification for get/preview/dry runs. Other abilities retain their existing approval policy. Direct ability writes outside the Unlimited execution gate are rejected.
+
+Staging: isolation helper executed and independently refreshed; encrypted backup present, calendar/push connections and enabled notifications zero, linked users and webhooks zero, SMS/WhatsApp disabled, only the three expected plugins active. The first adapter development package installed successfully and site_info reports 2.0.1. Live synthetic appointment acceptance remains pending; isolation is intentionally retained.

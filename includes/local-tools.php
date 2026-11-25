@@ -89,6 +89,10 @@ final class UWNext_Tools {
     public static function call($name,$args) {
         $all=self::definitions(); if(!isset($all[$name])) { return self::deny('unknown_tool','Unknown tool.',400); }
         $tool=$all[$name]; $valid=self::validate($tool,$args); if(is_wp_error($valid)) { return $valid; }
+        $amelia_ability=(class_exists('UWNext_Amelia')?UWNext_Amelia::ability_operation($name,$args):null);
+        if($amelia_ability!==null) {
+            $tool['read']=in_array($amelia_ability,array('get-appointment','preview-appointment'),true) || ($args['input']['dry_run']??true);
+        }
         // Optional Amelia dry runs are read-only even though the operation can mutate.
         if(in_array($name,array('amelia_reschedule_appointment','amelia_update_appointment'),true) && ($args['dry_run']??true)) { $tool['read']=true; }
         if(isset($tool['route']) && str_starts_with($tool['route'],'/file/')) {
@@ -164,7 +168,7 @@ final class UWNext_Tools {
             $failed=is_wp_error($out) || ($out instanceof WP_REST_Response && ($out->get_status()>=400 || (!empty($out->get_data()['exit_code']))));
             $uncertain=is_wp_error($out) && in_array($out->get_error_code(),array('amelia_operation_uncertain','amelia_verification_uncertain'),true);
             UWNext_Store::log($name,$uncertain?'uncertain':($failed?'failed':'completed'),$op);
-            if(str_starts_with($name,'amelia_') && !$tool['read']) {
+            if((str_starts_with($name,'amelia_') || $amelia_ability!==null) && !$tool['read']) {
                 if(is_wp_error($out)) { $out=new WP_Error($out->get_error_code(),$out->get_error_message(),array_merge((array)$out->get_error_data(),array('operation_id'=>$op))); }
                 elseif(is_array($out)) { $out['operation_id']=$op; }
             }
@@ -176,6 +180,11 @@ final class UWNext_Tools {
     }
     public static function request_approval($name,$args,$request) {
         $preview=null;
+        $amelia_ability=(class_exists('UWNext_Amelia')?UWNext_Amelia::ability_operation($name,$args):null);
+        if($amelia_ability!==null) {
+            $native_request=new WP_REST_Request('POST');$native_request->set_body_params($args['input']);
+            $preview=UWNext_Amelia::preview($native_request);if(is_wp_error($preview)){return $preview;}
+        }
         if(str_starts_with($name,'amelia_')) {
             $preview=UWNext_Amelia::preview($request);if(is_wp_error($preview)){return $preview;}
         }

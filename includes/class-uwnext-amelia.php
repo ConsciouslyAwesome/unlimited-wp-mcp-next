@@ -13,12 +13,20 @@ final class UWNext_Amelia {
 
     public static function register() {
         if (!self::supported()) { return; }
-        $id = array('type'=>'integer','minimum'=>1,'required'=>true);
         $permission = array(__CLASS__, 'permission');
-        $common = array('appointment_id'=>$id);
         foreach (array('get-appointment','preview-appointment','reschedule-appointment','update-appointment') as $operation) {
             $read = in_array($operation, array('get-appointment','preview-appointment'), true);
-            $args = $common;
+            $args = self::operation_args($operation);
+            uwnext_register_internal_route(UWNext_NS, '/amelia/'.$operation, array(
+                'methods'=>$read?'GET':'POST', 'permission_callback'=>$permission, 'args'=>$args,
+                'callback'=>function($request) use ($operation) { return self::handle($operation, $request); },
+            ));
+        }
+    }
+
+    public static function operation_args($operation) {
+        $read=in_array($operation,array('get-appointment','preview-appointment'),true);
+            $args = array('appointment_id'=>array('type'=>'integer','minimum'=>1,'required'=>true));
             if ($operation !== 'get-appointment') {
                 $args += array(
                     'expected_state'=>array('type'=>'string','pattern'=>'^[a-f0-9]{64}$','required'=>true),
@@ -31,9 +39,49 @@ final class UWNext_Amelia {
                 } else { $args['new_start']['required']=true; $args['timezone']['required']=true; }
                 if (!$read) { $args['dry_run']=array('type'=>'boolean','default'=>true); }
             }
-            uwnext_register_internal_route(UWNext_NS, '/amelia/'.$operation, array(
-                'methods'=>$read?'GET':'POST', 'permission_callback'=>$permission, 'args'=>$args,
-                'callback'=>function($request) use ($operation) { return self::handle($operation, $request); },
+        return $args;
+    }
+
+    /** Only these fixed aliases may share the outer Unlimited approval gate. */
+    public static function ability_operation($name,$args) {
+        if ($name !== 'ability_run' || !self::supported()) { return null; }
+        $map=array('uwnext-amelia/get-appointment'=>'get-appointment',
+            'uwnext-amelia/preview-appointment'=>'preview-appointment',
+            'uwnext-amelia/reschedule-appointment'=>'reschedule-appointment',
+            'uwnext-amelia/update-appointment'=>'update-appointment');
+        return $map[$args['name']??'']??null;
+    }
+
+    public static function register_category() {
+        if (self::supported() && function_exists('wp_register_ability_category')) {
+            wp_register_ability_category('uwnext-amelia',array('label'=>'Amelia appointment management',
+                'description'=>'Native appointment previews and approved updates.'));
+        }
+    }
+
+    public static function register_abilities() {
+        if (!self::supported() || !function_exists('wp_register_ability')) { return; }
+        foreach (array('get-appointment','preview-appointment','reschedule-appointment','update-appointment') as $operation) {
+            $properties=self::operation_args($operation);$required=array();
+            foreach ($properties as $key=>&$property) {
+                if (!empty($property['required'])) { $required[]=$key; }
+                unset($property['required']);
+            }
+            unset($property);
+            wp_register_ability('uwnext-amelia/'.$operation,array(
+                'label'=>ucwords(str_replace('-',' ',$operation)),
+                'description'=>'Amelia 9.10 native adapter. Use ability_run through Unlimited Next. Mutations require exact approval and expected_state; dry_run defaults true.',
+                'category'=>'uwnext-amelia',
+                'input_schema'=>array('type'=>'object','properties'=>$properties,'required'=>$required,'additionalProperties'=>false),
+                'permission_callback'=>array(__CLASS__,'permission'),
+                'execute_callback'=>function($input) use($operation) {
+                    foreach (self::operation_args($operation) as $key=>$arg) {
+                        if (!array_key_exists($key,$input) && array_key_exists('default',$arg)) { $input[$key]=$arg['default']; }
+                    }
+                    $request=new WP_REST_Request('POST');$request->set_body_params($input);
+                    return self::handle($operation,$request);
+                },
+                'meta'=>array('annotations'=>array('readonly'=>in_array($operation,array('get-appointment','preview-appointment'),true))),
             ));
         }
     }
@@ -218,3 +266,6 @@ final class UWNext_Amelia {
     }
 }
 add_action('rest_api_init',array('UWNext_Amelia','register'));
+
+add_action('wp_abilities_api_categories_init',array('UWNext_Amelia','register_category'));
+add_action('wp_abilities_api_init',array('UWNext_Amelia','register_abilities'));

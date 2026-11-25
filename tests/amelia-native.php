@@ -116,6 +116,26 @@ try {
         check(is_wp_error($out) && in_array($out->get_error_code(),array('amelia_operation_uncertain','amelia_verification_uncertain'),true),'Uncertain failure '.$failure);
         check($mutations===1,'No automatic retry '.$failure);
     }
+    class WP_REST_Request extends ArrayObject {
+        function __construct(...$args) { parent::__construct(); }
+        function set_body_params($input) { $this->exchangeArray($input); }
+        function offsetGet(mixed $key): mixed { return $this->getArrayCopy()[$key]??null; }
+    }
+    function wp_register_ability($name,$config) { $GLOBALS['registeredAbilities'][$name]=$config; }
+    reset_native();$registeredAbilities=array();UWNext_Amelia::register_abilities();
+    check(count($registeredAbilities)===4,'Exactly four fixed adapter abilities');
+    foreach ($registeredAbilities as $name=>$config) {
+        check($config['input_schema']['additionalProperties']===false,'Ability rejects extra parameters');
+        check(UWNext_Amelia::ability_operation('ability_run',array('name'=>$name))!==null,'Alias recognized exactly');
+    }
+    check(UWNext_Amelia::ability_operation('ability_run',array('name'=>'amelia/create-appointment'))===null,'Existing Amelia abilities never exempted');
+    check(UWNext_Amelia::ability_operation('other_tool',array('name'=>'uwnext-amelia/get-appointment'))===null,'Alias limited to ability_run');
+    $config=$registeredAbilities['uwnext-amelia/reschedule-appointment'];
+    $input=change_args();unset($input['dry_run']);$executing=false;
+    $out=$config['execute_callback']($input);
+    check(!is_wp_error($out)&&$mutations===0,'Ability callback applies safe dry-run default');
+    $input['dry_run']=false;$out=$config['execute_callback']($input);
+    check(is_wp_error($out)&&$mutations===0,'Direct ability invocation cannot mutate without gate');
     echo "PASS Amelia orchestration: $checks cumulative checks\n";
 } finally {
     unlink($root.'/src/Infrastructure/ContainerConfig/container.php');

@@ -61,6 +61,9 @@ function code($v,$expected){return is_wp_error($v)&&$v->get_error_code()===$expe
 
 if(($argv[1]??'')==='amelia') {
     class UWNext_Amelia {
+        static function ability_operation($name,$args) {
+            return $name==='ability_run' && ($args['name']??'')==='uwnext-amelia/reschedule-appointment'?'reschedule-appointment':null;
+        }
         static function preview($request) {
             return $request['expected_state']==='fresh'?array('affected_bookings'=>array(array('booking_id'=>6,'customer_id'=>7))):new WP_Error('appointment_state_changed','Fresh preview required');
         }
@@ -88,6 +91,27 @@ if(($argv[1]??'')==='amelia') {
     check(code(UWNext_Tools::call('amelia_reschedule_appointment',$args),'approval_invalid')&&$runs===1,'Amelia approval cannot replay');
     $stale=array('appointment_id'=>102,'expected_state'=>'stale','dry_run'=>false);
     check(code(UWNext_Tools::call('amelia_reschedule_appointment',$stale),'appointment_state_changed')&&$runs===1,'Stale Amelia preview cannot request approval');
+    uwnext_register_internal_route(UWNext_NS,'/ability/run',array('methods'=>'POST',
+        'args'=>array('name'=>array('type'=>'string','required'=>true),'input'=>array('type'=>'object','required'=>true)),
+        'permission_callback'=>function(){return true;},'callback'=>function($request) use (&$runs) {
+            if($request['input']['dry_run']??true) { return array('preview'=>true); }
+            check(UWNext_Tools::executing(),'Ability write has gate execution context');
+            $runs++;return array('appointment_update'=>'verified');
+        }));
+    $wrapped=array('name'=>'uwnext-amelia/reschedule-appointment','input'=>array('appointment_id'=>102,'expected_state'=>'fresh'));
+    check((UWNext_Tools::call('ability_run',$wrapped)['preview']??false)&&$runs===1,'Fixed ability alias defaults to read-only dry run');
+    $wrapped['input']['dry_run']=false;$out=UWNext_Tools::call('ability_run',$wrapped);
+    check(code($out,'approval_required')&&$runs===1,'Ability mutation requires approval');
+    $id=$out->get_error_data()['approval_id'];$payload=UWNext_Store::decrypt(UWNext_Store::get('approval',$id)['payload']);
+    check(count($payload['preview']['affected_bookings'])===1,'Ability approval includes affected customers');
+    UWNext_Admin::approve($id,7);
+    $changed=$wrapped;$changed['input']['appointment_id']=103;$changed['approval_id']=$id;
+    check(code(UWNext_Tools::call('ability_run',$changed),'approval_invalid'),'Ability approval binds nested inputs');
+    $wrapped['approval_id']=$id;$out=UWNext_Tools::call('ability_run',$wrapped);
+    check(($out['operation_id']??'')===$id&&$runs===2,'Ability mutation has matching receipt');
+    check(code(UWNext_Tools::call('ability_run',$wrapped),'approval_invalid')&&$runs===2,'Ability approval cannot replay');
+    $generic=array('name'=>'other/read-pretender','input'=>array('dry_run'=>true));
+    check(code(UWNext_Tools::call('ability_run',$generic),'approval_required'),'Unrelated abilities do not gain read exemption');
     echo "RESULT $passed Amelia approval checks passed\n";exit;
 }
 
