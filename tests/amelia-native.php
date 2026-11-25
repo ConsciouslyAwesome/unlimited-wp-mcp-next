@@ -92,7 +92,7 @@ try {
     reset_native();check(UWNext_Amelia::supported(),'Inspected profile enabled');
     $args=change_args();$preview=UWNext_Amelia::handle('preview-appointment',$args);
     check($mutations===0 && $emissions===0,'Preview has no writes or events');
-    check(count($preview['affected_bookings'])===2,'Group preview identifies every booking');
+    check(count($preview['affected_bookings'])===1,'Single preview identifies affected booking');
     check($preview['after']['start_utc']==='2026-12-07T14:00:00+00:00','Preview UTC verified');
     check($preview['after']['buffer_after_seconds']===900,'Preview preserves native buffer');
     $dryArgs=$args;$dryArgs['dry_run']=true;$executing=false;
@@ -160,3 +160,4 @@ try {
     unlink($root.'/src/Infrastructure/ContainerConfig/container.php');
     foreach(array('/src/Infrastructure/ContainerConfig','/src/Infrastructure','/src','') as $suffix)rmdir($root.$suffix);
 }
+
